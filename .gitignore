@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Training artifacts (keep theia_data/ for reproducibility)
+checkpoints/theia_cup*/
+checkpoints/theia_kettle*/
+theia_compare/
+output/
+paper/
+
+# Logs & diagnostics
+*.log
+diag_output.txt
+*.bak
+
+# Test objects (not part of our pipeline)
+isaacgym/src/intermimic/data/assets/objects/CupA*
+isaacgym/src/intermimic/data/assets/objects/CupB.urdf
+isaacgym/src/intermimic/data/assets/objects/CupC*
+isaacgym/src/intermimic/data/assets/objects/CupD*
+isaacgym/src/intermimic/data/assets/objects/objects/CupA/
+isaacgym/src/intermimic/data/assets/objects/objects/CupB/
+isaacgym/src/intermimic/data/assets/objects/objects/CupC/
+isaacgym/src/intermimic/data/assets/objects/objects/CupD/
+
+# VHACD cache
+.isaacgym/
+
+# Misc
+run_compare.sh

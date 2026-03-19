@@ -71,7 +71,10 @@ class InterMimicAgent(common_agent.CommonAgent):
         self.done_indices = []
         self.epoch_num_start = 0
         return
-    
+
+    def _amp_debug(self, info):
+        pass
+
     def trancate_gradients_and_step(self):
         if self.multi_gpu:
             # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
@@ -322,6 +325,8 @@ class InterMimicAgent(common_agent.CommonAgent):
 
         epinfos = []
         update_list = self.update_list
+        _metric_accum = {}
+        _metric_count = 0
 
         for n in range(self.horizon_length):
 
@@ -376,6 +381,13 @@ class InterMimicAgent(common_agent.CommonAgent):
             self.game_lengths.update(self.current_lengths[self.done_indices])
             self.algo_observer.process_infos(infos, self.done_indices)
 
+            for group_key in ('sub_rewards', 'errors', 'reset_rates', 'human_sub', 'object_sub'):
+                if group_key in infos:
+                    for k, v in infos[group_key].items():
+                        full_key = f'{group_key}/{k}'
+                        _metric_accum[full_key] = _metric_accum.get(full_key, 0.0) + v
+            _metric_count += 1
+
             not_dones = 1.0 - self.dones.float()
 
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
@@ -385,6 +397,11 @@ class InterMimicAgent(common_agent.CommonAgent):
                 self._amp_debug(infos)
                 
             self.done_indices = self.done_indices[:, 0]
+
+        if _metric_count > 0:
+            self._env_metrics = {k: v / _metric_count for k, v in _metric_accum.items()}
+        else:
+            self._env_metrics = {}
 
         mb_fdones = self.experience_buffer.tensor_dict['dones'].float()
         mb_values = self.experience_buffer.tensor_dict['values']
@@ -583,7 +600,7 @@ class InterMimicAgent(common_agent.CommonAgent):
 
         # --- zero grads (DDP/AMP-safe) ---
         self.optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+        with torch.amp.autocast('cuda', enabled=self.mixed_precision):
             res_dict = self.model(batch_dict)
             action_log_probs = res_dict['prev_neglogp']
             values = res_dict['values']
@@ -744,5 +761,9 @@ class InterMimicAgent(common_agent.CommonAgent):
         self.writer.add_scalar('usage/gpu', self.get_gpu_usage(), frame)
         self.writer.add_scalar('usage/cpu_memory', self.get_cpu_memory_usage(), frame)
         self.writer.add_scalar('usage/gpu_memory', self.get_gpu_memory_usage(), frame)
+
+        if hasattr(self, '_env_metrics'):
+            for k, v in self._env_metrics.items():
+                self.writer.add_scalar(k, v, frame)
 
         return

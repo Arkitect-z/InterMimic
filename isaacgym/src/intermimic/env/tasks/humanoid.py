@@ -255,8 +255,10 @@ class Humanoid_SMPLX(BaseTask):
         self.dof_limits_lower = []
         self.dof_limits_upper = []
 
-        max_agg_bodies = self.num_humanoid_bodies + 2
-        max_agg_shapes = self.num_humanoid_shapes + 65        
+        extra_bodies = getattr(self, '_extra_agg_bodies', 2)
+        extra_shapes = getattr(self, '_extra_agg_shapes', 65)
+        max_agg_bodies = self.num_humanoid_bodies + extra_bodies
+        max_agg_shapes = self.num_humanoid_shapes + extra_shapes
         
         for i in range(self.num_envs):
             # create env instance
