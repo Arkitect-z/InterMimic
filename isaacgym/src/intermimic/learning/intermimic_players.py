@@ -61,8 +61,14 @@ class InterMimicPlayerContinuous(common_player.CommonPlayer):
             has_masks = self.env.has_action_mask()
 
         need_init_rnn = self.is_rnn
+        task = getattr(self.env, "task", None)
+        strict_evaluation = bool(
+            task is not None and getattr(task, "enable_evaluation", False)
+        )
         for _ in range(n_games):
-            if games_played >= n_games:
+            if strict_evaluation and task.evaluation_complete():
+                break
+            if not strict_evaluation and games_played >= n_games:
                 break
 
             obs_dict = self.env_reset()
@@ -137,7 +143,17 @@ class InterMimicPlayerContinuous(common_player.CommonPlayer):
                             else:
                                 print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
                         sum_game_res += game_res
-                        if batch_size//self.num_agents == 1 or games_played >= n_games:
+                        if (
+                            batch_size // self.num_agents == 1
+                            or (
+                                strict_evaluation
+                                and task.evaluation_complete()
+                            )
+                            or (
+                                not strict_evaluation
+                                and games_played >= n_games
+                            )
+                        ):
                             break
                     
                     done_indices = done_indices[:, 0]
@@ -150,9 +166,21 @@ class InterMimicPlayerContinuous(common_player.CommonPlayer):
     
     def restore(self, fn):
         if (fn != 'Base'):
-            super().restore(fn)
+            checkpoint = None
+            if self.device.type == 'cpu':
+                # rl_games' default loader preserves CUDA storages, which
+                # prevents strict CPU-PhysX evaluation in a CPU-only worker.
+                checkpoint = torch.load(fn, map_location='cpu')
+                self.model.load_state_dict(checkpoint['model'])
+                if self.normalize_input:
+                    self.running_mean_std.load_state_dict(
+                        checkpoint['running_mean_std']
+                    )
+            else:
+                super().restore(fn)
             if self._normalize_amp_input:
-                checkpoint = torch_ext.load_checkpoint(fn)
+                if checkpoint is None:
+                    checkpoint = torch_ext.load_checkpoint(fn)
                 self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
         return
     

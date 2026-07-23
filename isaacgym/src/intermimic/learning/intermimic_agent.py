@@ -165,18 +165,35 @@ class InterMimicAgent(common_agent.CommonAgent):
         return t
     
     def train(self):
+        resumed = False
         if self.resume_from != 'None':
             try:
-                self.restore(self.resume_from)
-            except:
-                print('Failed to restore from checkpoint')
+                if self.config.get('resume_policy_only', False):
+                    self.restore_policy(self.resume_from)
+                    print(
+                        f"Warm-started policy/statistics from {self.resume_from}; "
+                        "optimizer, epoch, and reward-best state were reset."
+                    )
+                else:
+                    self.restore(self.resume_from)
+                    resumed = True
+                    print(
+                        f"Restored checkpoint {self.resume_from}: "
+                        f"epoch={self.epoch_num}, frame={self.frame}, "
+                        f"best_reward={self.last_mean_rewards}"
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to restore checkpoint {self.resume_from}"
+                ) from exc
 
         self.init_tensors()
-        self.last_mean_rewards = -100500
+        if not resumed:
+            self.last_mean_rewards = -100500
+            self.frame = 0
         start_time = time.time()
         total_time = 0
         rep_count = 0
-        self.frame = 0
 
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
@@ -209,8 +226,6 @@ class InterMimicAgent(common_agent.CommonAgent):
             total_time += sum_time
             frame = self.frame
             should_exit = False
-            if self.epoch_num - self.epoch_num_start < 5:
-                continue
             # Log/save only on rank 0
             if self.rank == 0:
                 scaled_time = sum_time
@@ -253,13 +268,24 @@ class InterMimicAgent(common_agent.CommonAgent):
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
 
+                    mean_reward = float(mean_rewards[0])
+                    if mean_reward > float(self.last_mean_rewards) and epoch_num >= self.save_best_after:
+                        self.last_mean_rewards = mean_reward
+                        best_model_output_file = model_output_file + '_best'
+                        print(f"Saving new best checkpoint: reward={mean_reward:.4f}")
+                        self.save(best_model_output_file)
+
                 if self.save_freq > 0 and (epoch_num % self.save_freq == 0):
                     self.save(model_output_file)
                     if self._save_intermediate:
                         int_model_output_file = model_output_file + '_' + str(epoch_num).zfill(8)
                         self.save(int_model_output_file)
 
-                if epoch_num > self.max_epochs:
+                # max_epochs is a run budget.  On resume, rl_games restores the
+                # absolute checkpoint epoch (e.g. 1100), so comparing the
+                # absolute value would terminate a 40-epoch fine-tune
+                # immediately.
+                if self.epoch_num - self.epoch_num_start >= self.max_epochs:
                     self.save(model_output_file)
                     print('MAX EPOCHS NUM!')
                     should_exit = True
@@ -306,19 +332,34 @@ class InterMimicAgent(common_agent.CommonAgent):
         return state
 
     def set_stats_weights(self, weights):
-        super().set_stats_weights(weights)
+        compatible_weights = weights
+        if self.normalize_value and 'reward_mean_std' not in weights:
+            # Checkpoints produced by the original Theia config did not
+            # normalize critic targets.  Warm-start their actor/critic and
+            # observation statistics while initializing the newly enabled
+            # value normalizer to its identity state.
+            compatible_weights = dict(weights)
+            compatible_weights['reward_mean_std'] = self.value_mean_std.state_dict()
+            print(
+                "Checkpoint has no reward_mean_std; initialized value "
+                "normalization from the identity state."
+            )
+        super().set_stats_weights(compatible_weights)
         if self._normalize_input:
+            if 'amp_input_mean_std' not in weights:
+                raise KeyError("Checkpoint is missing amp_input_mean_std")
             self._input_mean_std.load_state_dict(weights['amp_input_mean_std'])
         return
 
     def restore(self, fn):
         checkpoint = torch_ext.load_checkpoint(fn)
-        self.model.load_state_dict(checkpoint['model'])
-        if self.normalize_input:
-            self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
-        if self._normalize_input:
-            self._input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
         self.set_full_state_weights(checkpoint)
+
+    def restore_policy(self, fn):
+        """Warm-start policy and normalizers without stale optimizer momentum."""
+        checkpoint = torch_ext.load_checkpoint(fn)
+        self.model.load_state_dict(checkpoint['model'])
+        self.set_stats_weights(checkpoint)
 
     def play_steps(self):
         self.set_eval()

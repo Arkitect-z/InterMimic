@@ -8,20 +8,14 @@ REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd)"
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT/isaacgym/src:$REPO_ROOT:$PYTHONPATH"
 
-CFG_ENV="isaacgym/src/intermimic/data/cfg/theia_train.yaml"
+CFG_ENV="isaacgym/src/intermimic/data/cfg/theia_eval.yaml"
 CFG_TRAIN="isaacgym/src/intermimic/data/cfg/train/rlg/theia.yaml"
 
-# Find checkpoint: prefer theia_dual, fallback to any theia_*
-CKPT="checkpoints/theia_dual/theia_smplx/nn/mimic.pth"
-if [ ! -f "$CKPT" ]; then
-    CKPT=""
-    for dir in checkpoints/theia_*/theia_smplx/nn; do
-        [ -f "$dir/mimic.pth" ] && CKPT="$dir/mimic.pth"
-    done
-fi
+CKPT="${1:-checkpoints/theia_dual/theia_smplx/nn/mimic.pth}"
 
-if [ -z "$CKPT" ]; then
-    echo "No checkpoint found"
+if [ ! -f "$CKPT" ]; then
+    echo "Checkpoint not found: $CKPT"
+    echo "Usage: bash isaacgym/scripts/test_theia.sh /path/to/checkpoint.pth"
     exit 1
 fi
 

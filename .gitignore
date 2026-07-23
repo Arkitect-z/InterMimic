@@ -6,12 +6,18 @@ __pycache__/
 # Training artifacts (keep theia_data/ for reproducibility)
 checkpoints/theia_cup*/
 checkpoints/theia_kettle*/
+checkpoints/theia_10h_verified/
+checkpoints/theia_local_*/
+checkpoints/theia_server_full/
+checkpoints/*/theia_smplx/summaries/
 theia_compare/
+evaluation/
 output/
 paper/
 
 # Logs & diagnostics
 *.log
+training_log.txt
 diag_output.txt
 *.bak
 

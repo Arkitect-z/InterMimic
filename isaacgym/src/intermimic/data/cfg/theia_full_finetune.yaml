@@ -1,3 +1,5 @@
+# Stage 2 for a completely unseen full dataset. Resume the full optimizer state
+# from the Hybrid bootstrap and require complete frame-0-to-end rollouts.
 env:
   numEnvs: 2048
   envSpacing: 2
@@ -11,14 +13,16 @@ env:
   moreRigid: False
   pdControl: True
   powerScale: 1.0
-  controlFrequencyInv: 2 # 30 Hz
-  stateInit: "Hybrid"
-  rolloutLength: 100
-  hybridInitProb: 0.1
+  controlFrequencyInv: 2
+  stateInit: "Start"
+  # Replaced at load time by the longest selected motion.
+  rolloutLength: 1
+  fullSequenceRollout: True
+  hybridInitProb: 1.0
   enableEvaluation: False
   dataFPS: 30
   dataFramesScale: 1
-  dataSub: ['sub1']
+  dataSub: ['*']
   ballSize: 1.
   numObs: 3858
   motion_file: theia_data

@@ -306,6 +306,22 @@ def quat_inverse(x):
     """
     return quat_conjugate(x)
 
+
+def quat_sequence_angular_velocity(q: torch.Tensor, fps: float) -> torch.Tensor:
+    """Finite-difference a quaternion sequence using shortest relative rotations.
+
+    ``q`` uses Isaac Gym's xyzw convention and may have arbitrary dimensions
+    between time and quaternion, e.g. ``[T, J, 4]``.  The returned angular
+    velocity is expressed in the world frame and has shape ``q.shape[:-1] + [3]``.
+    """
+    flat_prev = q[:-1].reshape(-1, 4)
+    flat_next = q[1:].reshape(-1, 4)
+    delta = quat_mul_norm(flat_next, quat_inverse(flat_prev))
+    angle, axis = quat_to_angle_axis(delta)
+    output_shape = [q.shape[0] - 1] + list(q.shape[1:-1]) + [3]
+    velocity = (axis * angle.unsqueeze(-1) * fps).reshape(output_shape)
+    return torch.cat((torch.zeros_like(velocity[0:1]), velocity), dim=0)
+
 @torch.jit.script
 def quat_conjugate(x):
     """

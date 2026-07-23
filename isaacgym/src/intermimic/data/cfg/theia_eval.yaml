@@ -1,5 +1,5 @@
 env:
-  numEnvs: 2048
+  numEnvs: 128
   envSpacing: 2
   episodeLength: 360
   isFlagrun: False
@@ -11,14 +11,35 @@ env:
   moreRigid: False
   pdControl: True
   powerScale: 1.0
-  controlFrequencyInv: 2 # 30 Hz
-  stateInit: "Hybrid"
-  rolloutLength: 100
-  hybridInitProb: 0.1
-  enableEvaluation: False
+  controlFrequencyInv: 2
+  stateInit: "Start"
+  rolloutLength: 339
+  # At load time this becomes the longest selected sequence; each shorter
+  # sequence still ends at its own final frame.
+  fullSequenceRollout: True
+  hybridInitProb: 1.0
+  enableEvaluation: True
+  # Strict release evaluation uses PhysX actor-pair records.  Training keeps
+  # the inexpensive GPU distance proxy.
+  # Fast GPU evaluation uses the explicitly labeled proxy.  Set
+  # --exact_contact_evaluation --pipeline cpu for PhysX actor-pair records.
+  useExactContactEvaluation: False
+  evaluationStableFrames: 10
+  evaluationFinalPositionThreshold: 0.05
+  evaluationFinalRotationThresholdDeg: 20.0
+  evaluationMaxWrongContactSteps: 0
+  # Wrong contacts are reported, but are not a universal failure condition:
+  # an unseen task may use a valid interaction strategy absent from the GT.
+  evaluationRequireNoWrongContact: False
+  validateReferenceFK: True
+  # ProtoMotions and Isaac agree within millimetres on the main body.  The
+  # terminal finger capsules differ by at most ~12.3 mm / 8.9 degrees.
+  fkMaxPositionError: 0.015
+  fkMaxRotationErrorDeg: 10.0
   dataFPS: 30
   dataFramesScale: 1
-  dataSub: ['sub1']
+  # Evaluate every converted sequence; each environment is bound to one.
+  dataSub: ['*']
   ballSize: 1.
   numObs: 3858
   motion_file: theia_data
@@ -33,22 +54,19 @@ env:
   residualBodyLimit: 0.30
   residualWristLimit: 0.40
   residualFingerLimit: 0.45
-  contactRewardMode: "legacy_multiplicative"
+  # Evaluate task completion without allowing GT contact timing to terminate
+  # the rollout. Actor-pair contact is still reported as a separate metric.
+  contactRewardMode: "soft"
   enableContactFailureTermination: False
-  enableWristFailureTermination: True
-  enableObjectContactPhaseTermination: True
-  contactFailureGraceFrames: 20
+  enableWristFailureTermination: False
+  enableObjectContactPhaseTermination: False
+  contactFailureGraceFrames: 30
   fingerBonusWeight: 0.05
-  wristBonusWeight: 0.30
-  graspBonusWeight: 0.05
+  wristBonusWeight: 0.10
+  graspBonusWeight: 0.025
   wrongContactPenalty: 0.0
   terminalObjectPoseFrames: 30
-  terminalObjectPoseBonusWeight: 0.0
-  validateReferenceFK: True
-  fkMaxPositionError: 0.015
-  fkMaxRotationErrorDeg: 10.0
-  requireBimanualContact: True
-  minimumFootCollisionZ: -0.001
+  terminalObjectPoseBonusWeight: 0.10
   localRootObs: False
   keyBodies: ["L_Hip", "L_Knee", "L_Ankle", "L_Toe", "R_Hip", "R_Knee", "R_Ankle", "R_Toe", "Torso", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Shoulder", "L_Elbow", "L_Wrist", "R_Thorax", "R_Shoulder", "R_Elbow", "R_Wrist"]
   contactBodies: ["L_Hip", "L_Knee", "L_Ankle", "L_Toe", "R_Hip", "R_Knee", "R_Ankle", "R_Toe", "Torso", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Shoulder", "L_Elbow", "L_Wrist", "R_Thorax", "R_Shoulder", "R_Elbow", "R_Wrist", "L_Index3", "L_Middle3", "L_Pinky3", "L_Ring3", "L_Thumb3", "R_Index3", "R_Middle3", "R_Pinky3", "R_Ring3", "R_Thumb3"]

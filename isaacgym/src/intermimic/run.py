@@ -84,7 +84,9 @@ def create_rlgpu_env(**kwargs):
     # bind this process to its GPU
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
-        args.device = 'cuda'
+        # CPU tensor pipeline is required for Isaac Gym's actor-pair contact
+        # records.  Policy inference may remain on CUDA.
+        args.device = 'cuda' if args.use_gpu_pipeline else 'cpu'
         args.device_id = local_rank
         args.rl_device = f'cuda:{local_rank}'
         cfg['rank'] = rank
@@ -225,6 +227,23 @@ def main():
     cfg_train['params']['seed'] = set_seed(cfg_train['params'].get("seed", -1), cfg_train['params'].get("torch_deterministic", False))
 
     cfg_train['params']['config']['multi_gpu'] = args.multi_gpu
+    # rl_games constructs the player and its action tensors before the
+    # environment creator gets a chance to normalize devices.  Keep policy
+    # inference on the requested CUDA device when available, but make strict
+    # CPU-PhysX evaluation usable in CPU-only workers/CI.
+    if str(args.rl_device).startswith('cuda') and not torch.cuda.is_available():
+        print(
+            f"CUDA policy device {args.rl_device!r} is unavailable; "
+            "falling back to CPU"
+        )
+        args.rl_device = 'cpu'
+    cfg_train['params']['config']['device'] = args.rl_device
+    cfg_train['params']['config']['device_name'] = args.rl_device
+
+    # InterMimic uses its own resume_from path in the training loop.  Honor the
+    # standard --checkpoint flag for both evaluation and training/fine-tuning.
+    if args.checkpoint != "Base" and not (args.test or args.play):
+        cfg_train['params']['config']['resume_from'] = args.checkpoint
 
     if args.horizon_length != -1:
         cfg_train['params']['config']['horizon_length'] = args.horizon_length
@@ -264,6 +283,9 @@ def main():
 
     if args.ball_size!= 0.:
         cfg['env']['ballSize'] = args.ball_size
+
+    if args.exact_contact_evaluation:
+        cfg['env']['useExactContactEvaluation'] = True
     
     # Create default directories for weights and statistics
     cfg_train['params']['config']['train_dir'] = args.output_path

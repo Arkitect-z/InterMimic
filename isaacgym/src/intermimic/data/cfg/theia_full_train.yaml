@@ -11,18 +11,23 @@ env:
   moreRigid: False
   pdControl: True
   powerScale: 1.0
-  controlFrequencyInv: 2 # 30 Hz
+  controlFrequencyInv: 2
+  # Stage 1 for a completely unseen dataset: learn short segments and contact
+  # transitions before asking the policy to survive every sequence end-to-end.
   stateInit: "Hybrid"
   rolloutLength: 100
   hybridInitProb: 0.1
   enableEvaluation: False
   dataFPS: 30
   dataFramesScale: 1
-  dataSub: ['sub1']
+  # Full-dataset stage: select every sub<number>_*.pt sequence in motion_file.
+  dataSub: ['*']
   ballSize: 1.
   numObs: 3858
   motion_file: theia_data
   robotType: "smplx/theia.xml"
+  # Exact density is not required for large-scale training. Known objects keep
+  # their measured approximations; every other object uses the default.
   objectDensity:
     default: 1000
     CupBlue: 1200
@@ -33,6 +38,9 @@ env:
   residualBodyLimit: 0.30
   residualWristLimit: 0.40
   residualFingerLimit: 0.45
+  # Conservative InterMimic objective with correctness fixes. Keep reference
+  # contact as shaping, but never terminate merely because GT contact timing
+  # was missed and never punish the approximate GPU wrong-contact signal.
   contactRewardMode: "legacy_multiplicative"
   enableContactFailureTermination: False
   enableWristFailureTermination: True

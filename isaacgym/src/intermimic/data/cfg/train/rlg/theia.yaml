@@ -49,6 +49,8 @@ params:
     normalize_advantage: True
     gamma: 0.99
     tau: 0.95
+    # From-scratch/default InterMimic optimization. Do not replace this with
+    # the 1e-6 single-sequence preservation setting for unseen server data.
     learning_rate: 2e-5
     lr_schedule: constant
     score_to_win: 20000
@@ -69,4 +71,11 @@ params:
     bounds_loss_coef: 10
     enable_eps_greedy: False
     save_intermediate: False
-    resume_from: checkpoints/theia_dual/theia_smplx/nn/mimic.pth
+    resume_from: None
+    # A server restart must restore optimizer/epoch/best state. Policy-only
+    # transfer is intentionally not the default.
+    resume_policy_only: False
+    player:
+      games_num: 1
+      determenistic: True
+      print_stats: True

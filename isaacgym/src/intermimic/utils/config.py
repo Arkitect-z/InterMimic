@@ -70,7 +70,10 @@ def set_seed(seed, torch_deterministic=False):
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-        torch.set_deterministic(True)
+        if hasattr(torch, "use_deterministic_algorithms"):
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        else:
+            torch.set_deterministic(True)
     else:
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
@@ -250,6 +253,8 @@ def get_args(benchmark=False):
             "help": "Apply physics domain randomization"},
         {"name": "--torch_deterministic", "action": "store_true", "default": False,
             "help": "Apply additional PyTorch settings for more deterministic behaviour"},
+        {"name": "--exact_contact_evaluation", "action": "store_true", "default": False,
+            "help": "Use PhysX actor-pair contacts during evaluation (requires --pipeline cpu)"},
         {"name": "--output_path", "type": str, "default": "output/", "help": "Specify output directory"},
         {"name": "--llc_checkpoint", "type": str, "default": "",
             "help": "Path to the saved weights for the low-level controller of an HRL agent."}]
