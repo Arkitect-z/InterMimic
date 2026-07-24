@@ -30,7 +30,6 @@ from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.algos_torch import torch_ext
 from . import a2c_common
 import psutil
-import subprocess
 from isaacgym.torch_utils import *
 
 import time
@@ -74,6 +73,12 @@ class InterMimicAgent(common_agent.CommonAgent):
         }
         if any(epoch <= 0 for epoch in self.checkpoint_milestones):
             raise ValueError("checkpoint_milestones must contain positive epochs")
+        self.usage_log_interval = max(
+            0, int(config.get('usage_log_interval', 50))
+        )
+        self.save_reward_best = bool(
+            config.get('save_reward_best', True)
+        )
         self.done_indices = []
         self.epoch_num_start = 0
         return
@@ -275,13 +280,21 @@ class InterMimicAgent(common_agent.CommonAgent):
                         self.self_play_manager.update(self)
 
                     mean_reward = float(mean_rewards[0])
-                    if mean_reward > float(self.last_mean_rewards) and epoch_num >= self.save_best_after:
+                    if (
+                        self.save_reward_best
+                        and mean_reward > float(self.last_mean_rewards)
+                        and epoch_num >= self.save_best_after
+                    ):
                         self.last_mean_rewards = mean_reward
                         best_model_output_file = model_output_file + '_best'
                         print(f"Saving new best checkpoint: reward={mean_reward:.4f}")
                         self.save(best_model_output_file)
 
-                if self.save_freq > 0 and (epoch_num % self.save_freq == 0):
+                saved_periodic = (
+                    self.save_freq > 0
+                    and epoch_num % self.save_freq == 0
+                )
+                if saved_periodic:
                     self.save(model_output_file)
                     if self._save_intermediate:
                         int_model_output_file = model_output_file + '_' + str(epoch_num).zfill(8)
@@ -301,7 +314,8 @@ class InterMimicAgent(common_agent.CommonAgent):
                 # absolute value would terminate a 40-epoch fine-tune
                 # immediately.
                 if self.epoch_num - self.epoch_num_start >= self.max_epochs:
-                    self.save(model_output_file)
+                    if not saved_periodic:
+                        self.save(model_output_file)
                     print('MAX EPOCHS NUM!')
                     should_exit = True
 
@@ -785,15 +799,12 @@ class InterMimicAgent(common_agent.CommonAgent):
         return
     
     def get_cpu_usage(self):
-        return psutil.cpu_percent(interval=1)
+        # interval=None is non-blocking. The previous one-second sample added
+        # more than six hours of idle time to a 22k-epoch run.
+        return psutil.cpu_percent(interval=None)
 
     def get_cpu_memory_usage(self):
         return psutil.virtual_memory().percent
-    
-    # Function to get GPU usage
-    def get_gpu_usage(self):
-        result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader'], stdout=subprocess.PIPE)
-        return int(result.stdout.decode().strip().split()[0])
     
     # Function to get GPU memory usage
     def get_gpu_memory_usage(self):
@@ -813,10 +824,19 @@ class InterMimicAgent(common_agent.CommonAgent):
         self.writer.add_scalar('info/clip_frac', torch_ext.mean_list(train_info['actor_clip_frac']).item(), frame)
         self.writer.add_scalar('info/kl', torch_ext.mean_list(train_info['kl']).item(), frame)
 
-        self.writer.add_scalar('usage/cpu', self.get_cpu_usage(), frame)
-        self.writer.add_scalar('usage/gpu', self.get_gpu_usage(), frame)
-        self.writer.add_scalar('usage/cpu_memory', self.get_cpu_memory_usage(), frame)
-        self.writer.add_scalar('usage/gpu_memory', self.get_gpu_memory_usage(), frame)
+        if (
+            self.usage_log_interval > 0
+            and self.epoch_num % self.usage_log_interval == 0
+        ):
+            self.writer.add_scalar(
+                'usage/cpu', self.get_cpu_usage(), frame
+            )
+            self.writer.add_scalar(
+                'usage/cpu_memory', self.get_cpu_memory_usage(), frame
+            )
+            self.writer.add_scalar(
+                'usage/gpu_memory', self.get_gpu_memory_usage(), frame
+            )
 
         if hasattr(self, '_env_metrics'):
             for k, v in self._env_metrics.items():

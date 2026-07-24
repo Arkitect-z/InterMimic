@@ -46,6 +46,13 @@ env:
   enableWristFailureTermination: True
   enableObjectContactPhaseTermination: True
   contactFailureGraceFrames: 20
+  # Full-scale runs omit optional scalar diagnostics and avoid per-step device
+  # synchronization. Enable only for a small, isolated debug run.
+  enableTrainingDiagnostics: False
+  enableStepDiagnostics: False
+  # Keep Stage-A segments fixed at 100 frames. One late-contact outlier must
+  # not silently lengthen every sequence's rollout.
+  adaptiveRolloutFromLatestContact: False
   fingerBonusWeight: 0.05
   wristBonusWeight: 0.30
   graspBonusWeight: 0.05

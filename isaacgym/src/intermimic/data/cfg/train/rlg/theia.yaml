@@ -55,9 +55,15 @@ params:
     lr_schedule: constant
     score_to_win: 20000
     max_epochs: 20000
+    # Formal results use fixed milestones/final checkpoints, not reward-best.
+    # Avoid eight workers repeatedly writing ~134 MB checkpoints in lockstep.
+    save_reward_best: False
     save_best_after: 50
-    save_frequency: 50
+    save_frequency: 250
     print_stats: True
+    # Resource telemetry is sampled without blocking and only periodically.
+    # GPU utilization is monitored by the external multi-GPU scheduler.
+    usage_log_interval: 50
     grad_norm: 1.0
     entropy_coef: 0.0
     truncate_grads: False

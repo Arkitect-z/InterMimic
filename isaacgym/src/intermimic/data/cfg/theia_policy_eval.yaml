@@ -51,6 +51,9 @@ env:
   enableWristFailureTermination: True
   enableObjectContactPhaseTermination: True
   contactFailureGraceFrames: 20
+  enableTrainingDiagnostics: False
+  enableStepDiagnostics: False
+  adaptiveRolloutFromLatestContact: False
   fingerBonusWeight: 0.05
   wristBonusWeight: 0.30
   graspBonusWeight: 0.05

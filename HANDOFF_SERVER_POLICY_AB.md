@@ -23,6 +23,8 @@ LaTeX 表格导出。服务器 agent 只需要：
 - 主结果只使用 epoch 22,000 final checkpoint；
 - 训练从随机权重开始，不加载本机或单序列 policy；
 - 两组必须使用同一个 frozen `policy_ab_manifest.json`；
+- 两组共享物体轨迹、接触标签、contact reward/termination 和全部 PPO 配置；
+  唯一实验自变量是 Raw 与 tactile-refined 人体/手部参考运动；
 - 主表只报告 InterMimic 的 Succ.、Duration、\(E_h\)、\(E_o\)。
 
 `run_theia_server.sh` 是旧的单 condition 工具，**不能用于这次论文 A/B**。
@@ -206,13 +208,19 @@ echo "N=$N replicas=$REPLICAS envs=$NUM_ENVS minibatch=$MINIBATCH_SIZE"
 因为 horizon 为 32，PPO batch 是 `32*NUM_ENVS`；上式令 minibatch 为其
 四分之一。例如 N=94 时是 1974 env / 15792 minibatch。
 
-服务器 agent 可根据显存修改 `TARGET_ENVS`，但最终必须满足：
+服务器 agent 可根据 24 GiB 显存修改 `TARGET_ENVS`，但最终必须满足：
 
 - `NUM_ENVS=N*k` 且 `k>=1`；
 - `(32*NUM_ENVS) % MINIBATCH_SIZE == 0`；
 - `MINIBATCH_SIZE % 4 == 0`（当前 `seq_len=4`）；
 - Raw/Full 和 4 seeds 使用相同的解析值；
 - smoke 与正式 run manifest 记录实际值。
+
+不要追求 `nvidia-smi` 显示 100% memory。应在完成至少 200 个 epoch 的 warmup
+后选择不会 OOM 的最大 `N*k`，为 PhysX、checkpoint 保存和临时 tensor 保留约
+1.5--2 GiB。建议以 `N*floor(target/N)` 从低到高试探；所有 8 个正式 worker
+冻结为同一个最终值。训练代码默认关闭逐 step scalar diagnostics，并把资源监控
+交给外部调度器，避免用日志换取显存/FPS。
 
 ## 7. CPU preflight（第一道硬门）
 
@@ -234,6 +242,10 @@ PRECHECK_READY.json
 
 该门会复算 pair/data/asset hash、检查 `[T,594]`、finite/quaternion/contact、
 双手接触、足部碰撞和 Raw/Full 逐列配对。失败时不能关闭 validator。
+`policy_ab_validation.json` 还会记录每条 pair 的
+`mean_body_position_delta_cm` 和 `contact_hand_position_delta_cm`，并在整个
+Raw/Full 人体参考集合逐位相同时直接失败。这两个字段只用于训练前确认 tactile
+refinement 确实进入了 policy 数据，不参与筛选序列或事后调参。
 
 ## 8. GPU smoke（第二道硬门）
 
@@ -331,8 +343,7 @@ condition、seed、预算、配置或源码 fingerprint 改变，会拒绝把不
 
 ## 10. 多 GPU 调度脚本的要求
 
-服务器 agent 可以自由决定 8 卡同波、4 卡两波或更少 GPU 多波，但每个 worker
-必须是独立进程和独立输出目录：
+8×RTX 4090 的首选拓扑是 8 卡同波，每张卡运行一个完整数据集 policy：
 
 ```text
 raw/seed_0   full/seed_0
@@ -340,6 +351,11 @@ raw/seed_1   full/seed_1
 raw/seed_2   full/seed_2
 raw/seed_3   full/seed_3
 ```
+
+这里的并行单位是 `condition × seed`，不是 sequence。禁止把不同 S1 序列分给
+不同 GPU 独立训练；那会得到 8 个只覆盖子集的 policy，而不是一个覆盖全部 S1
+的 policy。若主机 CPU/RAM 或 PCIe 使 8 路吞吐下降，再改为 4 卡两波或更少
+GPU 多波。
 
 调度器必须：
 
@@ -366,7 +382,6 @@ raw/seed_3   full/seed_3
   policy_seed.log
   bootstrap/theia_smplx/nn/
     mimic.pth
-    mimic_best.pth
     mimic_epoch_00002000.pth
     mimic_epoch_00005000.pth
     mimic_epoch_00010000.pth
@@ -386,7 +401,9 @@ raw/seed_3   full/seed_3
     summary.json
 ```
 
-`mimic_best.pth` 只用于诊断；主表禁止选择 reward-best/test-best。
+训练期每 250 epoch 覆盖保存 `mimic.pth` 供断点恢复，并保留上述固定
+milestone；正式配置关闭了约 134 MB 的 reward-best 反复写盘。主表禁止选择
+reward-best/test-best。
 
 若需要 learning curve，可用同一个正式 evaluator 对固定 milestone 运行，并把
 结果写入 `evaluation/milestone_<epoch>/`；不能根据中间 test 结果选择主
@@ -441,6 +458,12 @@ ET/IET 开关与 Stage-B 保持一致。项目有意关闭 GT contact-miss hard 
 允许可行但与 GT 接触时序不同的策略；论文 methods/caption 必须披露这一
 termination 变体，不能声称逐项复现了 InterMimic 未公开的官方 rollout budget。
 
+Raw 也使用与 Full 完全相同的 measured contact schedule 和 object trajectory；
+因此论文中的准确条件名应是“Raw kinematics + shared object/contact
+supervision”与“Tactile-refined kinematics + shared object/contact
+supervision”。这种配对设计用于把成功率差异归因于人体/手部 refinement，
+不能在看到结果后为 Raw/Full 分别调整接触权重或终止条件。
+
 ## 14. 最终 Go / No-Go
 
 以下全部存在且 valid 才可正式启动：
@@ -453,6 +476,13 @@ termination 变体，不能声称逐项复现了 InterMimic 未公开的官方 r
 - Raw/Full 相同 N、env、minibatch、seeds、epochs 和 K；
 - 每张计划使用的 GPU 已通过 CUDA/Isaac 启动；
 - 调度器有独立目录、退出码传播和恢复逻辑。
+
+代码静态协议测试：
+
+```bash
+python isaacgym/scripts/test_theia_training_protocol.py
+python isaacgym/scripts/test_theia_policy_results.py
+```
 
 当前本机已经用一条真实 339-frame S1 sequence 完成 paired conversion、CPU
 preflight，以及 Raw/Full 各 `1 epoch fresh + 1 epoch full-state resume +

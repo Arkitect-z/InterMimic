@@ -207,12 +207,16 @@ def main():
 
     pairs = []
     asset_names = set()
+    any_human_reference_difference = False
     for reference_id in sorted(raw_ids & full_ids):
         raw_info = raw_index[reference_id]
         full_info = full_index[reference_id]
         raw_path = raw_info["path"]
         full_path = full_info["path"]
         pair_errors = []
+        human_columns_equal = None
+        mean_body_position_delta_cm = None
+        contact_hand_position_delta_cm = None
         if raw_path.name != full_path.name:
             pair_errors.append(
                 f"filenames differ: {raw_path.name} vs {full_path.name}"
@@ -248,6 +252,32 @@ def main():
                     "object/contact columns 318:386 are not bit-identical "
                     f"(max_abs={float(delta.max()):.9g})"
                 )
+            if raw_tensor.shape == full_tensor.shape:
+                human_columns_equal = bool(
+                    torch.equal(raw_tensor[:, :318], full_tensor[:, :318])
+                    and torch.equal(raw_tensor[:, 386:], full_tensor[:, 386:])
+                )
+                any_human_reference_difference |= not human_columns_equal
+                raw_body = raw_tensor[:, 162:318].view(-1, 52, 3)
+                full_body = full_tensor[:, 162:318].view(-1, 52, 3)
+                body_delta = (raw_body - full_body).norm(dim=-1)
+                mean_body_position_delta_cm = float(
+                    100.0 * body_delta.mean()
+                )
+                contact_human = raw_tensor[:, 334:386]
+                hand_deltas = []
+                for body_ids in (range(17, 33), range(36, 52)):
+                    contact_mask = (
+                        contact_human[:, list(body_ids)] > 0.5
+                    ).any(dim=-1)
+                    if contact_mask.any():
+                        hand_deltas.append(
+                            body_delta[contact_mask][:, list(body_ids)].reshape(-1)
+                        )
+                if hand_deltas:
+                    contact_hand_position_delta_cm = float(
+                        100.0 * torch.cat(hand_deltas).mean()
+                    )
             contacts = raw_tensor[:, 332:386]
             if torch.any((contacts - contacts.round()).abs() > 1e-4):
                 pair_errors.append("contact columns are not discrete")
@@ -319,12 +349,23 @@ def main():
                 "frames": frames,
                 "raw_sha256": raw_hash,
                 "full_sha256": full_hash,
+                "human_columns_equal": human_columns_equal,
+                "mean_body_position_delta_cm": mean_body_position_delta_cm,
+                "contact_hand_position_delta_cm": (
+                    contact_hand_position_delta_cm
+                ),
                 "pair_columns_equal": not any(
                     "object/contact columns" in message
                     for message in pair_errors
                 ),
                 "valid": not pair_errors,
             }
+        )
+
+    if pairs and not any_human_reference_difference:
+        errors.append(
+            "Every Raw/Full human reference is bit-identical; the policy A/B "
+            "experiment has no demonstration-refinement treatment"
         )
 
     asset_entries = []

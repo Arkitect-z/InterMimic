@@ -82,6 +82,8 @@ if [ "$EXCLUDED_COUNT" -gt 0 ] && [ "${ACCEPT_EXCLUSIONS:-0}" != "1" ]; then
     exit 1
 fi
 
+python "$SCRIPT_DIR/test_theia_training_protocol.py"
+
 python "$SCRIPT_DIR/validate_theia_policy_ab.py" \
     --raw-dir "$RAW_DIR" \
     --full-dir "$FULL_DIR" \

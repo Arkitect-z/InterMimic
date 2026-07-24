@@ -79,6 +79,18 @@ class InterMimic(Humanoid_SMPLX):
         )
         if self._contact_failure_grace_frames < 0:
             raise ValueError("contactFailureGraceFrames must be non-negative")
+        # Scalar diagnostics are intentionally opt-in. Calling Tensor.item()
+        # for dozens of metrics on every simulation step serializes the GPU
+        # pipeline and is prohibitively expensive for full-dataset training.
+        self._enable_training_diagnostics = bool(
+            cfg['env'].get('enableTrainingDiagnostics', False)
+        )
+        self._enable_step_diagnostics = bool(
+            cfg['env'].get('enableStepDiagnostics', False)
+        )
+        self._adaptive_rollout_from_latest_contact = bool(
+            cfg['env'].get('adaptiveRolloutFromLatestContact', False)
+        )
         # Evaluation only works with stateInit "Start"
         state_init_is_start = (state_init == "Start")
         self.enable_evaluation = cfg['env'].get('enableEvaluation', False) and state_init_is_start
@@ -240,7 +252,7 @@ class InterMimic(Humanoid_SMPLX):
         self._contact_fail_counter = torch.zeros((self.num_envs, 2), device=self.device, dtype=torch.float)
         self._hand_fail_reset = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self._diag_file = None
-        if self.num_envs <= 16:
+        if self._enable_step_diagnostics and self.num_envs <= 16:
             diag_path = os.path.join(os.getcwd(), 'diag_output.txt')
             self._diag_file = open(diag_path, 'w')
             print(f"[DIAG] Writing per-step diagnostics to {diag_path}")
@@ -263,12 +275,21 @@ class InterMimic(Humanoid_SMPLX):
 
     def _valid_motions_for_env(self, env_id):
         """Each environment is bound to one sequence and its fixed tables."""
-        env_idx = int(env_id.item()) if torch.is_tensor(env_id) else int(env_id)
-        return self._motion_ids[env_idx % len(self._motion_obj_pairs)].view(1)
+        env_idx = torch.as_tensor(
+            env_id, device=self.device, dtype=torch.long
+        )
+        return torch.remainder(env_idx, self.num_motions).reshape(-1)
 
     def _sample_motion_for_env(self, env_id):
-        valid = self._valid_motions_for_env(env_id)
-        return valid[torch.randint(valid.numel(), (), device=self.device)]
+        # Every environment is deliberately bound to exactly one reference.
+        return self._valid_motions_for_env(env_id)[0]
+
+    def _motion_ids_for_envs(self, env_ids):
+        """Vectorized fixed reference binding for a batch of environments."""
+        return torch.remainder(
+            env_ids.to(device=self.device, dtype=torch.long),
+            self.num_motions,
+        )
 
     def _resolve_control_dof_indices(self):
         """Resolve critical control groups by asset DOF name and fail fast."""
@@ -840,7 +861,7 @@ class InterMimic(Humanoid_SMPLX):
         if not hasattr(self, 'data_component_order'):
             self.create_component_stat(loaded_dict)
 
-        # Pre-compute per-frame RSI sampling weights + adaptive rollout length
+        # Pre-compute per-frame RSI sampling weights.
         self._rsi_weights = []
         transition_pre = 50   # ~1.3s: covers full reach phase
         transition_post = 10  # ~0.5s: covers grasp + early hold
@@ -867,13 +888,41 @@ class InterMimic(Humanoid_SMPLX):
                     w[start:end] = transition_boost
             self._rsi_weights.append(w.to(self.device))
 
-        # Adaptive rollout: must cover from frame 0 past the latest contact onset + margin
-        adaptive_rollout = latest_onset + transition_post + 30  # onset + post + 30 frames into contact
-        cfg_rollout = self.rollout_length
-        if adaptive_rollout > cfg_rollout:
-            self.rollout_length = adaptive_rollout
-            print(f"[INFO] rolloutLength auto-adjusted: {cfg_rollout} -> {self.rollout_length} "
-                  f"(latest contact onset at frame {latest_onset})")
+        # A global latest-onset rule lets one long outlier silently inflate the
+        # rollout for every reference and defeats the fixed-length RSI
+        # curriculum. Keep it only as an explicit legacy option.
+        if self._adaptive_rollout_from_latest_contact:
+            adaptive_rollout = latest_onset + transition_post + 30
+            cfg_rollout = self.rollout_length
+            if adaptive_rollout > cfg_rollout:
+                self.rollout_length = adaptive_rollout
+                print(
+                    f"[INFO] rolloutLength auto-adjusted: "
+                    f"{cfg_rollout} -> {self.rollout_length} "
+                    f"(latest contact onset at frame {latest_onset})"
+                )
+
+        self._rsi_probabilities = []
+        for motion_idx, weights in enumerate(self._rsi_weights):
+            max_start = max(
+                1, max_episode_length[motion_idx] - self.rollout_length
+            )
+            probabilities = weights[:max_start]
+            probabilities = probabilities / probabilities.sum().clamp_min(1e-6)
+            self._rsi_probabilities.append(probabilities)
+        max_probability_length = max(
+            probabilities.numel()
+            for probabilities in self._rsi_probabilities
+        )
+        self._rsi_probability_matrix = torch.zeros(
+            (self.num_motions, max_probability_length),
+            device=self.device,
+            dtype=self._rsi_probabilities[0].dtype,
+        )
+        for motion_idx, probabilities in enumerate(self._rsi_probabilities):
+            self._rsi_probability_matrix[
+                motion_idx, :probabilities.numel()
+            ] = probabilities
 
         return hoi_data
 
@@ -1279,40 +1328,21 @@ class InterMimic(Humanoid_SMPLX):
 
     def _reset_ref_state_init(self, env_ids):
         num_envs = env_ids.shape[0]
-
-        # During evaluation, prioritize undersampled sequences for balanced coverage
+        i = self._motion_ids_for_envs(env_ids)
         if self.enable_evaluation:
-            i = []
-            for env_idx in env_ids:
-                valid_motions = self._valid_motions_for_env(env_idx)
-
-                # Get visit counts for valid motions
-                visit_counts = self._sequence_visit_count[valid_motions]
-
-                # Sample with inverse probability (prioritize less visited sequences)
-                # Add 1 to avoid division by zero
-                inv_counts = 1.0 / (visit_counts.float() + 1.0)
-                probs = inv_counts / inv_counts.sum()
-
-                # Sample based on inverse visit counts
-                sampled_idx = torch.multinomial(probs, 1).item()
-                selected_motion = valid_motions[sampled_idx]
-                i.append(selected_motion)
-
-            i = to_torch(i, device=self.device, dtype=torch.long)
-
-            # Update visit counts
-            for motion_id in i:
-                self._sequence_visit_count[motion_id] += 1
-        else:
-            i = torch.stack([
-                self._sample_motion_for_env(env_id)
-                for env_id in env_ids
-            ])
+            self._sequence_visit_count.scatter_add_(
+                0, i, torch.ones_like(i, dtype=torch.long)
+            )
 
         if (self._state_init == InterMimic.StateInit.Random
             or self._state_init == InterMimic.StateInit.Hybrid):
-            motion_times = torch.cat([torch.randint(0, max(1, self.max_episode_length[i[e]]-self.rollout_length), (1,), device=self.device, dtype=torch.long) for e in range(num_envs)]) 
+            max_start = (
+                self.max_episode_length[i] - self.rollout_length
+            ).clamp_min(1)
+            motion_times = (
+                torch.rand(num_envs, device=self.device)
+                * max_start.float()
+            ).long()
         elif (self._state_init == InterMimic.StateInit.Start):
             motion_times = torch.zeros(num_envs, device=self.device, dtype=torch.long)#.int()
 
@@ -1350,31 +1380,28 @@ class InterMimic(Humanoid_SMPLX):
         cdf = torch.cumsum(prob, 0)
         return cdf
 
-    def _sample_weighted_time(self, motion_idx):
-        """Sample a start time with transition-window boosted weights."""
-        max_t = max(1, self.max_episode_length[motion_idx].item() - self.rollout_length)
-        w = self._rsi_weights[motion_idx][:max_t]
-        if w.sum() < 1e-6:
-            return torch.zeros(1, device=self.device, dtype=torch.long)
-        prob = w / w.sum()
-        return torch.multinomial(prob, 1)
+    def _sample_weighted_times(self, motion_ids, sample_mask):
+        """Sample all per-reference RSI times in one batched GPU operation."""
+        motion_times = torch.zeros(
+            motion_ids.shape[0], device=self.device, dtype=torch.long
+        )
+        indices = torch.nonzero(sample_mask, as_tuple=False).flatten()
+        if indices.numel() == 0:
+            return motion_times
+        probabilities = self._rsi_probability_matrix[motion_ids[indices]]
+        motion_times[indices] = torch.multinomial(
+            probabilities, 1, replacement=True
+        ).squeeze(-1)
+        return motion_times
 
     def _reset_hybrid_state_init(self, env_ids):
         num_envs = env_ids.shape[0]
-        i = torch.stack([
-            self._sample_motion_for_env(env_id)
-            for env_id in env_ids
-        ])
-        ref_probs = to_torch(np.array([self._hybrid_init_prob] * num_envs), device=self.device)
-        ref_init_mask = torch.bernoulli(ref_probs) == 1.0
-
-        ref_reset_ids = env_ids[ref_init_mask]
-
-        motion_times = torch.cat([
-            self._sample_weighted_time(i[e]) if env_ids[e] not in ref_reset_ids
-            else torch.zeros((1,), device=self.device, dtype=torch.long)
-            for e in range(num_envs)
-        ])
+        i = self._motion_ids_for_envs(env_ids)
+        ref_init_mask = (
+            torch.rand(num_envs, device=self.device)
+            < self._hybrid_init_prob
+        )
+        motion_times = self._sample_weighted_times(i, ~ref_init_mask)
         ref_reward = self.ref_reward[i, :, motion_times] 
         prob = ref_reward / ref_reward.sum(1, keepdim=True)
 
@@ -1904,7 +1931,15 @@ class InterMimic(Humanoid_SMPLX):
         ref_contact = self.extract_data_component('contact_human', obs=self._curr_ref_obs)
         left_any = (ref_contact[:, 17:33] > 0.1).any(dim=-1).float()
         right_any = (ref_contact[:, 36:52] > 0.1).any(dim=-1).float()
-        contact_phase = ((left_any + right_any) > 0).float()
+        finger_weight = float(self.cfg['env'].get('fingerBonusWeight', 0.05))
+        wrist_weight = float(self.cfg['env'].get('wristBonusWeight', 0.30))
+        grasp_weight = float(self.cfg['env'].get('graspBonusWeight', 0.05))
+        wrong_contact_weight = float(
+            self.cfg['env'].get('wrongContactPenalty', 0.0)
+        )
+        terminal_pose_weight = float(
+            self.cfg['env'].get('terminalObjectPoseBonusWeight', 0.0)
+        )
 
         # --- Wrist error + reset (tighter: 15cm / 20 frames) ---
         sim_body_pos = self.extract_data_component('body_pos', obs=self._curr_obs).view(-1, 52, 3)
@@ -1929,10 +1964,6 @@ class InterMimic(Humanoid_SMPLX):
         ref_obj1_pos = self.extract_data_component('obj1_pos', obs=self._curr_ref_obs)
         obj2_pos = self.extract_data_component('obj2_pos', obs=self._curr_obs)
         ref_obj2_pos = self.extract_data_component('obj2_pos', obs=self._curr_ref_obs)
-        obj1_rot = self.extract_data_component('obj1_rot', obs=self._curr_obs)
-        ref_obj1_rot = self.extract_data_component('obj1_rot', obs=self._curr_ref_obs)
-        obj2_rot = self.extract_data_component('obj2_rot', obs=self._curr_obs)
-        ref_obj2_rot = self.extract_data_component('obj2_rot', obs=self._curr_ref_obs)
         obj_thresholds = self._motion_obj_reset_thresholds[self.data_id]
         obj1_thresh = obj_thresholds[:, 0]
         obj2_thresh = obj_thresholds[:, 1]
@@ -1954,61 +1985,85 @@ class InterMimic(Humanoid_SMPLX):
         correct_left = self._correct_left_contact
         correct_right = self._correct_right_contact
         grasp_bonus = left_any * correct_left + right_any * correct_right
-        wrong_contact = left_any * (self._left_hand_force_any - correct_left).clamp(min=0.0) \
-                      + right_any * (self._right_hand_force_any - correct_right).clamp(min=0.0)
+        if (
+            wrong_contact_weight > 0
+            or self.enable_evaluation
+            or self._enable_training_diagnostics
+        ):
+            wrong_contact = (
+                left_any
+                * (self._left_hand_force_any - correct_left).clamp(min=0.0)
+                + right_any
+                * (self._right_hand_force_any - correct_right).clamp(min=0.0)
+            )
+        else:
+            wrong_contact = torch.zeros_like(correct_left)
 
-        # Align the optimized objective with the release criterion.  The base
-        # object reward is human-heading-relative and can remain high when an
-        # object finishes with a large world-frame orientation error.  Ramp in
-        # a small global pose bonus during the final reference window.
-        obj1_pos_error = (obj1_pos - ref_obj1_pos).norm(dim=-1)
-        obj2_pos_error = (obj2_pos - ref_obj2_pos).norm(dim=-1)
-        obj1_rot_diff = torch_utils.quat_mul_norm(
-            torch_utils.quat_inverse(ref_obj1_rot), obj1_rot
-        )
-        obj2_rot_diff = torch_utils.quat_mul_norm(
-            torch_utils.quat_inverse(ref_obj2_rot), obj2_rot
-        )
-        obj1_rot_error, _ = torch_utils.quat_to_angle_axis(obj1_rot_diff)
-        obj2_rot_error, _ = torch_utils.quat_to_angle_axis(obj2_rot_diff)
-        terminal_frames = max(
-            1, int(self.cfg['env'].get('terminalObjectPoseFrames', 30))
-        )
-        frames_remaining = (
-            self.max_episode_length[self.data_id] - 1 - self.progress_buf
-        ).float()
-        terminal_ramp = (
-            1.0 - frames_remaining / float(terminal_frames)
-        ).clamp(min=0.0, max=1.0)
-        terminal_object_pose_bonus = terminal_ramp * 0.25 * (
-            torch.exp(-50.0 * obj1_pos_error.square())
-            + torch.exp(-50.0 * obj2_pos_error.square())
-            + torch.exp(-2.0 * obj1_rot_error.abs())
-            + torch.exp(-2.0 * obj2_rot_error.abs())
-        )
+        terminal_object_pose_bonus = torch.zeros_like(correct_left)
+        if terminal_pose_weight > 0 or self._enable_training_diagnostics:
+            # The base object reward is human-heading-relative. Compute this
+            # global terminal pose signal only when it is optimized or logged.
+            obj1_rot = self.extract_data_component(
+                'obj1_rot', obs=self._curr_obs
+            )
+            ref_obj1_rot = self.extract_data_component(
+                'obj1_rot', obs=self._curr_ref_obs
+            )
+            obj2_rot = self.extract_data_component(
+                'obj2_rot', obs=self._curr_obs
+            )
+            ref_obj2_rot = self.extract_data_component(
+                'obj2_rot', obs=self._curr_ref_obs
+            )
+            obj1_pos_error = (obj1_pos - ref_obj1_pos).norm(dim=-1)
+            obj2_pos_error = (obj2_pos - ref_obj2_pos).norm(dim=-1)
+            obj1_rot_diff = torch_utils.quat_mul_norm(
+                torch_utils.quat_inverse(ref_obj1_rot), obj1_rot
+            )
+            obj2_rot_diff = torch_utils.quat_mul_norm(
+                torch_utils.quat_inverse(ref_obj2_rot), obj2_rot
+            )
+            obj1_rot_error, _ = torch_utils.quat_to_angle_axis(obj1_rot_diff)
+            obj2_rot_error, _ = torch_utils.quat_to_angle_axis(obj2_rot_diff)
+            terminal_frames = max(
+                1, int(self.cfg['env'].get('terminalObjectPoseFrames', 30))
+            )
+            frames_remaining = (
+                self.max_episode_length[self.data_id]
+                - 1
+                - self.progress_buf
+            ).float()
+            terminal_ramp = (
+                1.0 - frames_remaining / float(terminal_frames)
+            ).clamp(min=0.0, max=1.0)
+            terminal_object_pose_bonus = terminal_ramp * 0.25 * (
+                torch.exp(-50.0 * obj1_pos_error.square())
+                + torch.exp(-50.0 * obj2_pos_error.square())
+                + torch.exp(-2.0 * obj1_rot_error.abs())
+                + torch.exp(-2.0 * obj2_rot_error.abs())
+            )
 
-        self._contact_fail_counter = (
-            self._contact_fail_counter + contact_reset
-        ) * contact_reset
-        contact_fail_reset = (
-            (
-                self._contact_fail_counter
-                > self._contact_failure_grace_frames
-            ).any(dim=-1)
-            & (self.progress_buf > self.start_times + 10)
-        )
+        if (
+            self._enable_contact_failure_termination
+            or self._enable_training_diagnostics
+        ):
+            self._contact_fail_counter = (
+                self._contact_fail_counter + contact_reset
+            ) * contact_reset
+            contact_fail_reset = (
+                (
+                    self._contact_fail_counter
+                    > self._contact_failure_grace_frames
+                ).any(dim=-1)
+                & (self.progress_buf > self.start_times + 10)
+            )
+        else:
+            contact_fail_reset = torch.zeros_like(self._hand_fail_reset)
         self._contact_phase_fail_reset = contact_fail_reset
         if self._enable_contact_failure_termination:
             self._hand_fail_reset = self._hand_fail_reset | contact_fail_reset
 
         # --- Total reward ---
-        finger_weight = float(self.cfg['env'].get('fingerBonusWeight', 0.05))
-        wrist_weight = float(self.cfg['env'].get('wristBonusWeight', 0.30))
-        grasp_weight = float(self.cfg['env'].get('graspBonusWeight', 0.05))
-        wrong_contact_weight = float(self.cfg['env'].get('wrongContactPenalty', 0.0))
-        terminal_pose_weight = float(
-            self.cfg['env'].get('terminalObjectPoseBonusWeight', 0.0)
-        )
         base_reward = rb * ro * rig
         if self._contact_reward_mode == 'legacy_multiplicative':
             base_reward = base_reward * rcg
@@ -2041,10 +2096,18 @@ class InterMimic(Humanoid_SMPLX):
                 self._target_states_2,
             ], dim=1)
 
-        human_error = (ref_key_pos - key_pos).norm(dim=-1).mean(dim=-1)
-        pts1, pts2 = obj_points
-        rpts1, rpts2 = ref_obj_points
-        object_error = ((pts1 - rpts1).norm(dim=-1).mean(dim=-1) + (pts2 - rpts2).norm(dim=-1).mean(dim=-1)) * 0.5
+        human_error = None
+        object_error = None
+        if self.enable_evaluation or self._enable_training_diagnostics:
+            human_error = (
+                (ref_key_pos - key_pos).norm(dim=-1).mean(dim=-1)
+            )
+            pts1, pts2 = obj_points
+            rpts1, rpts2 = ref_obj_points
+            object_error = 0.5 * (
+                (pts1 - rpts1).norm(dim=-1).mean(dim=-1)
+                + (pts2 - rpts2).norm(dim=-1).mean(dim=-1)
+            )
 
         if self.enable_evaluation:
             eval_correct_left = correct_left
@@ -2124,39 +2187,44 @@ class InterMimic(Humanoid_SMPLX):
             self._eval_object_error_sum += object_error * active.float()
             self._eval_wrong_contact_steps_env += wrong_contact_step
 
-        self.extras['sub_rewards'] = {
-            'rb': rb.mean().item(),
-            'ro': ro.mean().item(),
-            'ro1': self._ro1.mean().item(),
-            'ro2': self._ro2.mean().item(),
-            'rig': rig.mean().item(),
-            'rcg': rcg.mean().item(),
-            'r_finger': self._r_finger.mean().item(),
-            'wrist_bonus': wrist_bonus.mean().item(),
-            'grasp_bonus': grasp_bonus.mean().item(),
-            'terminal_object_pose_bonus': terminal_object_pose_bonus.mean().item(),
-            'wrong_contact': wrong_contact.mean().item(),
-            'correct_left_contact': correct_left.mean().item(),
-            'correct_right_contact': correct_right.mean().item(),
-        }
-        self.extras['errors'] = {
-            'human_pose': human_error.mean().item(),
-            'object_pose': object_error.mean().item(),
-        }
-        self.extras['reset_rates'] = {
-            'human': human_reset.float().mean().item(),
-            'object': object_reset.float().mean().item(),
-            'ig': ig_reset.float().mean().item(),
-            'contact': (contact_reset.sum(dim=-1) > 0).float().mean().item(),
-            'contact_fail': contact_fail_reset.float().mean().item(),
-            'contact_termination': (
-                contact_fail_reset.float().mean().item()
-                if self._enable_contact_failure_termination else 0.0
-            ),
-            'wrist_fail': wrist_fail_reset.float().mean().item(),
-            'object_contact_phase_fail': obj_fail_reset.float().mean().item(),
-            'hand_fail': self._hand_fail_reset.float().mean().item(),
-        }
+        if self._enable_training_diagnostics:
+            self.extras['sub_rewards'] = {
+                'rb': rb.mean().item(),
+                'ro': ro.mean().item(),
+                'ro1': self._ro1.mean().item(),
+                'ro2': self._ro2.mean().item(),
+                'rig': rig.mean().item(),
+                'rcg': rcg.mean().item(),
+                'r_finger': self._r_finger.mean().item(),
+                'wrist_bonus': wrist_bonus.mean().item(),
+                'grasp_bonus': grasp_bonus.mean().item(),
+                'terminal_object_pose_bonus': (
+                    terminal_object_pose_bonus.mean().item()
+                ),
+                'wrong_contact': wrong_contact.mean().item(),
+                'correct_left_contact': correct_left.mean().item(),
+                'correct_right_contact': correct_right.mean().item(),
+            }
+            self.extras['errors'] = {
+                'human_pose': human_error.mean().item(),
+                'object_pose': object_error.mean().item(),
+            }
+            self.extras['reset_rates'] = {
+                'human': human_reset.float().mean().item(),
+                'object': object_reset.float().mean().item(),
+                'ig': ig_reset.float().mean().item(),
+                'contact': (
+                    (contact_reset.sum(dim=-1) > 0).float().mean().item()
+                ),
+                'contact_fail': contact_fail_reset.float().mean().item(),
+                'contact_termination': (
+                    contact_fail_reset.float().mean().item()
+                    if self._enable_contact_failure_termination else 0.0
+                ),
+                'wrist_fail': wrist_fail_reset.float().mean().item(),
+                'object_contact_phase_fail': obj_fail_reset.float().mean().item(),
+                'hand_fail': self._hand_fail_reset.float().mean().item(),
+            }
 
         # Per-step diagnostic logging (only for small envs, e.g. test mode)
         if self.num_envs <= 16 and hasattr(self, '_diag_file') and self._diag_file is not None:
@@ -2166,7 +2234,11 @@ class InterMimic(Humanoid_SMPLX):
             for ei in range(self.num_envs):
                 t = self.progress_buf[ei].item()
                 st = self.start_times[ei].item()
-                phase = "CONTACT" if contact_phase[ei] > 0.5 else "free"
+                phase = (
+                    "CONTACT"
+                    if left_any[ei] > 0.5 or right_any[ei] > 0.5
+                    else "free"
+                )
                 touch = "TOUCH" if sim_left_any[ei] > 0.5 else "no"
                 obj1_pos = self.extract_data_component('obj1_pos', obs=self._curr_obs)
                 left_wrist_obj = (sim_body_pos[ei, 17] - obj1_pos[ei]).norm().item()
@@ -2235,13 +2307,14 @@ class InterMimic(Humanoid_SMPLX):
         rb = rp*rr*rpv*rrv*energy
         human_reset = (ref_key_pos - key_pos).norm(dim=-1).mean(dim=-1) > 0.5
 
-        self.extras['human_sub'] = {
-            'rp': rp.mean().item(),
-            'rr': rr.mean().item(),
-            'rpv': rpv.mean().item(),
-            'rrv': rrv.mean().item(),
-            'energy': energy.mean().item(),
-        }
+        if self._enable_training_diagnostics:
+            self.extras['human_sub'] = {
+                'rp': rp.mean().item(),
+                'rr': rr.mean().item(),
+                'rpv': rpv.mean().item(),
+                'rrv': rrv.mean().item(),
+                'energy': energy.mean().item(),
+            }
         return rb, human_reset, key_pos, ref_key_pos
     
     def _compute_single_obj_reward(self, w, obj_prefix, obj_id_per_motion):
@@ -2309,11 +2382,15 @@ class InterMimic(Humanoid_SMPLX):
         ro = ro1 * ro2
         object_reset = torch.logical_or(rst1, rst2)
 
-        self.extras['object_sub'] = {
-            'ro1': ro1.mean().item(), 'ro2': ro2.mean().item(),
-            'obj1_pos_err': eop1.mean().item(), 'obj2_pos_err': eop2.mean().item(),
-            'obj1_rot_err': eor1.mean().item(), 'obj2_rot_err': eor2.mean().item(),
-        }
+        if self._enable_training_diagnostics:
+            self.extras['object_sub'] = {
+                'ro1': ro1.mean().item(),
+                'ro2': ro2.mean().item(),
+                'obj1_pos_err': eop1.mean().item(),
+                'obj2_pos_err': eop2.mean().item(),
+                'obj1_rot_err': eor1.mean().item(),
+                'obj2_rot_err': eor2.mean().item(),
+            }
         return ro, object_reset, (pts1, pts2), (rpts1, rpts2)
     
     def _compute_single_ig_reward(self, w, key_pos, ref_key_pos, obj_pts, ref_obj_pts):
@@ -2336,9 +2413,11 @@ class InterMimic(Humanoid_SMPLX):
         rpts1, rpts2 = ref_obj_points_pair
         rig1, rst1 = self._compute_single_ig_reward(w, key_pos, ref_key_pos, pts1, rpts1)
         rig2, rst2 = self._compute_single_ig_reward(w, key_pos, ref_key_pos, pts2, rpts2)
-        self.extras.setdefault('ig_sub', {}).update({
-            'rig1': rig1.mean().item(), 'rig2': rig2.mean().item(),
-        })
+        if self._enable_training_diagnostics:
+            self.extras.setdefault('ig_sub', {}).update({
+                'rig1': rig1.mean().item(),
+                'rig2': rig2.mean().item(),
+            })
         return rig1 * rig2, torch.logical_or(rst1, rst2)
     
     def _compute_pair_contact(self):
@@ -2536,20 +2615,15 @@ class InterMimic(Humanoid_SMPLX):
     def play_dataset_step(self, time):
 
         t = time
+        env_ids = torch.arange(
+            self.num_envs, device=self.device, dtype=torch.long
+        )
         if t == 0:
-            self.data_id = torch.stack([
-                self._sample_motion_for_env(env_id)
-                for env_id in range(self.num_envs)
-            ])
-        env_ids = to_torch([i for i in range(self.num_envs)], device=self.device, dtype=torch.long)
-        t = to_torch(
-                [
-                    t if t < self.max_episode_length[self.data_id[i]] else self.max_episode_length[self.data_id[i]]-1
-                    for i in range(self.num_envs)
-                ],
-                device=self.device,
-                dtype=torch.long
-            )
+            self.data_id = self._motion_ids_for_envs(env_ids)
+        t = torch.minimum(
+            torch.full_like(env_ids, t),
+            self.max_episode_length[self.data_id] - 1,
+        )
         ### update objects ###
         for st, prefix in [(self._target_states_1, 'obj1'), (self._target_states_2, 'obj2')]:
             st[env_ids, :3] = self.extract_data_component(f'{prefix}_pos', True, self.data_id[env_ids], t)
