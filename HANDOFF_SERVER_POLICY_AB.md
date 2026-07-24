@@ -1,89 +1,122 @@
-# Theia S1 Raw-vs-Full policy 实验服务器 HANDOFF
+# Theia S1 Raw-vs-Refined policy 实验服务器 HANDOFF
 
-更新时间：2026-07-24（Asia/Shanghai）
+更新时间：2026-07-25（Asia/Shanghai）
 
-## 0. 服务器 agent 的任务边界
+## 0. 最重要的实验契约
 
-本仓库已经提供数据转换、冻结/验证、单 run 训练与恢复、严格评测、统计汇总和
-LaTeX 表格导出。服务器 agent 只需要：
+本次 rebuttal 不训练一个覆盖全部 S1 的通用 policy，也不做多 training-seed
+重复。实验单位是单条 reference：
 
-1. 填入服务器真实路径和 Conda 环境；
-2. 根据 GPU 型号/显存实测选择共同的目标环境数；
-3. 编写或优化 **8 个独立进程**的 GPU 调度脚本；
-4. 依次通过 CPU preflight 和 GPU smoke gate 后启动正式 run；
-5. 运行现成聚合器并回传 `results.md` 和完整结果目录。
+```text
+每条 S1 reference
+  ├── Raw MoCap：从随机权重训练 1 次
+  └── Measured-tactile refinement：从随机权重训练 1 次
+```
 
-不能由调度脚本改变的实验契约：
+正式参数已固定：
 
-- conditions：`raw`、`full`；
-- training seeds：`0 1 2 3`；
-- Stage A / B：20,000 / 2,000 epochs；
-- 每条 reference 的正式评测 trial 数：`K=10`；
-- Raw/Full 同一 training seed 使用同一个 evaluation seed；
-- 主结果只使用 epoch 22,000 final checkpoint；
-- 训练从随机权重开始，不加载本机或单序列 policy；
-- 两组必须使用同一个 frozen `policy_ab_manifest.json`；
-- 两组共享物体轨迹、接触标签、contact reward/termination 和全部 PPO 配置；
-  唯一实验自变量是 Raw 与 tactile-refined 人体/手部参考运动；
-- 主表只报告 InterMimic 的 Succ.、Duration、\(E_h\)、\(E_o\)。
+- 每个 `reference × condition` 只训练一次；
+- training seed 固定为 `0`，它只是固定随机初始化，不表示重复训练；
+- 单阶段 Hybrid/RSI 训练 1100 epochs；
+- Raw/Refined 使用相同 seed、PPO、环境数、物理参数、物体轨迹和接触标签；
+- 每条 policy 用 `K=10` 个并行 rollout 评测；这是一次并行评测，不是训练十次；
+- 主指标为 InterMimic 风格的 RefSucc@10、Duration、\(E_h\)、\(E_o\)；
+- 额外保留 episode completion，用于描述 rollout 稳定性；
+- 统计时以 reference 为单位做 paired bootstrap，不把帧或 K 个 rollout 当作
+  独立训练样本，也不声称估计了 training-seed 方差。
 
-`run_theia_server.sh` 是旧的单 condition 工具，**不能用于这次论文 A/B**。
+内部目录仍使用条件名 `full`，其论文含义是
+`Measured-tactile refinement`。不要再调度 `seed_1/2/3`，也不要使用旧的
+20k+2k 全数据集方案。
 
-## 1. 两个 Git 仓库都必须同步
+## 1. 服务器 agent 的工作边界
 
-InterMimic 是父 Theia 仓库中的独立 Git 仓库。本流程跨两个仓库：
+仓库已提供：
+
+- Raw/Refined 成对转换、hash 冻结和 CPU 校验；
+- ProtoMotions 版本硬检查；
+- 单 reference 的 Raw/Refined 配对训练与断点续训；
+- 接收 reference list 的单 GPU worker；
+- K=10 完整 cohort 评测；
+- 逐 reference、姿态分组和论文表格聚合。
+
+服务器 agent 只需：
+
+1. 填写服务器路径和 Conda 环境；
+2. 在 24 GiB RTX 4090 上烟测并选择共同的 `NUM_ENVS`；
+3. 把全部 reference IDs 不重不漏地分成集群/GPU 列表；
+4. 每张 GPU 启动一个 list worker；
+5. 汇集各集群的 `references/` 目录并运行聚合器。
+
+服务器 agent 可以优化 GPU 调度、失败重启和外部资源监控，但不能更改
+Raw/Refined 之间的训练预算、seed、配置或评测 K。
+
+## 2. 三个仓库/依赖版本
+
+正式流程跨越：
 
 ```text
 Theia/toolkit/scripts/theia2intermimic.py
 Theia/thirdparty/InterMimic/
+Theia/thirdparty/ProtoMotions/
 ```
 
-只同步 InterMimic 会缺少 Raw/Full converter。服务器开始前记录：
+父 Theia 仓库提供 converter；InterMimic 提供训练和评测；converter 使用
+ProtoMotions 的：
+
+```python
+poselib.poselib.skeleton.skeleton3d.SkeletonMotion
+```
+
+ProtoMotions 必须是：
+
+```text
+remote: https://github.com/NVlabs/ProtoMotions.git
+commit: 4a905b998101333a2fb91f2de8e2cab4bd0db68e
+```
+
+检查命令：
 
 ```bash
-git -C /path/to/Theia rev-parse HEAD
-git -C /path/to/Theia/thirdparty/InterMimic rev-parse HEAD
-git -C /path/to/Theia status --short
-git -C /path/to/Theia/thirdparty/InterMimic status --short
+cd "$INTERMIMIC_ROOT"
+python isaacgym/scripts/check_theia_protomotions.py
 ```
 
-正式运行时源码应 clean；若因紧急修复无法 clean，必须保存两个仓库的
-`git diff --binary`，并保证修复对 Raw/Full 和全部 seeds 同时生效。不能在一半
-run 完成后只更新另一半。
+检查器会拒绝 commit 不匹配、缺少 `SkeletonMotion` 或 ProtoMotions 中存在已
+跟踪 dirty 修改。未跟踪的 SMPL-X 模型文件不改变代码版本。正式 converter
+入口和 CPU preflight 都会重复执行此检查，不能用
+`--allow-version-mismatch` 生成论文数据。
 
-## 2. 科学问题与唯一自变量
+开始前保存：
 
-比较：
+```bash
+git -C "$THEIA_ROOT" rev-parse HEAD
+git -C "$INTERMIMIC_ROOT" rev-parse HEAD
+git -C "$THEIA_ROOT/thirdparty/ProtoMotions" rev-parse HEAD
+git -C "$THEIA_ROOT" status --short
+git -C "$INTERMIMIC_ROOT" status --short
+```
 
-- `raw`：`smplx_humanoid_motion.npy`
-- `full`：Setting-1 measured-tactile full refinement，
-  `smplx_humanoid_motion_refined.npy`
+Theia 与 InterMimic 正式运行时都应 clean。不能在部分 reference 完成后只更新
+后续 worker 的代码。
 
-两组共享 sequence IDs、帧索引、object trajectory、measured-contact schedule、
-对象资产、场景 Z shift、训练/评测配置和预算。唯一变化是 humanoid/hand
-reference kinematics。这个实验支持“完整 refinement pipeline 提高 downstream
-policy learnability”，不能单独归因于 tactile，也不能称为通用 task success。
-
-## 3. 必备环境与路径
-
-下面用占位符：
+## 3. 路径
 
 ```bash
 THEIA_ROOT=/server/path/Theia
-INTERMIMIC_ROOT=$THEIA_ROOT/thirdparty/InterMimic
+INTERMIMIC_ROOT="$THEIA_ROOT/thirdparty/InterMimic"
 SOURCE_ROOT=/server/path/to/S1_sequence_directories
-OBJECTS_ROOT=$THEIA_ROOT/data/objects
+OBJECTS_ROOT="$THEIA_ROOT/data/objects"
 POLICY_DATA_ROOT=/server/experiments/theia_policy_ab_data
 EXPERIMENT_ROOT=/server/experiments/theia_policy_ab_runs
 CONDA_ENV=intermimic
 ```
 
-先确认：
+CUDA/Isaac Gym 检查：
 
 ```bash
 conda run --no-capture-output -n "$CONDA_ENV" python - <<'PY'
 from isaacgym import gymapi
-import h5py
 import torch
 print(torch.__version__, torch.version.cuda)
 print(torch.cuda.is_available(), torch.cuda.device_count())
@@ -91,14 +124,12 @@ PY
 nvidia-smi
 ```
 
-训练需要 CUDA 和 Isaac Gym；转换/统计需要 `torch, h5py, scipy, trimesh, numpy`。
+转换还依赖 `torch, numpy, scipy, h5py, trimesh`；转换本身不要求 CUDA。
 
-## 4. 冻结候选 S1 清单
+## 4. 冻结全部 S1 候选清单
 
-不要在结果产生后按 policy 表现删序列，也不要把本地文档中的 94 或论文旧稿的
-120 当作服务器事实。依据仓库 `docs/dataset_id.md`，正式 S1 只包含同高度
-`L11/L22/L33/L44/L55` 和空间变体 `V01/V02/V03`。先按服务器实存目录生成并
-冻结排序后的规范候选清单：
+正式 S1 使用同高度 `L11/L22/L33/L44/L55` 和 `V01/V02/V03`。必须在查看
+policy 结果之前冻结全量清单：
 
 ```bash
 python - "$SOURCE_ROOT" /server/manifests/s1_policy_candidates.txt <<'PY'
@@ -114,32 +145,25 @@ paths = sorted(
     for path in root.iterdir()
     if path.is_dir() and pattern.fullmatch(path.name)
 )
+if not paths:
+    raise SystemExit("No canonical S1 sequence was found")
 output.parent.mkdir(parents=True, exist_ok=True)
 output.write_text("".join(f"{path}\n" for path in paths))
-print(f"Frozen {len(paths)} canonical S1 candidates in {output}")
+print(f"Frozen {len(paths)} S1 references in {output}")
 PY
-N_CANDIDATES=$(wc -l < /server/manifests/s1_policy_candidates.txt)
-test "$N_CANDIDATES" -gt 0
 ```
 
-另行审计未进入清单的 `S1*` 目录，确认它们确实是 V04、非规范/旧命名或不属于
-论文 S1 协议，保存这份审计记录。若规范序列的附加 action/task 元数据不完整，
-可准备一份在 rollout 前冻结的 CSV/JSON：
+审计未进入清单的 `S1*` 目录并保存原因。不能根据 policy 成功率事后删除难
+序列。若需要 action/task 字段，在 rollout 之前冻结 metadata CSV；它只用于
+分组，不参与训练。
 
-```text
-reference_id,height,variation,action,task
-...
-```
-
-`height` 只能与 ID 中同高 level 一致，`variation` 只能是 V1--V3。不能用
-metadata 把非规范 level/variation 改名后纳入，也不能运行后猜测姿态桶。
-
-## 5. 一次性生成 paired 数据
-
-必须在 `intermimic` 环境中运行：
+## 5. 一次性生成成对数据
 
 ```bash
 cd "$INTERMIMIC_ROOT"
+N_CANDIDATES=$(grep -cv '^[[:space:]]*$' \
+  /server/manifests/s1_policy_candidates.txt)
+
 conda run --no-capture-output -n "$CONDA_ENV" \
   python isaacgym/scripts/prepare_theia_policy_ab.py \
   --source-root "$SOURCE_ROOT" \
@@ -149,345 +173,302 @@ conda run --no-capture-output -n "$CONDA_ENV" \
   --expected-count "$N_CANDIDATES"
 ```
 
-目录名缺 L/V 时追加：
+如需 metadata，追加：
 
 ```bash
 --reference-metadata /server/manifests/s1_policy_metadata.csv
 ```
 
-转换器会：
+正式转换会：
 
-- 强制显式选择 Raw 或 refined，不 fallback；
-- 保留真实 `P<number>` subject；
-- 先分别计算两组所需 ground shift，再使用两者较大的共同 shift 重写；
-- 强制 Raw/Full shape、frame indices、object/contact source 一致；
-- 强制 tensor 的 `318:386`（object pose + contact）逐位相同；
-- 只把完整成功的 pair 放入 `eligible/raw` 和 `eligible/full`；
-- 输出数据、converter 和 object asset SHA-256。
+- 显式生成 Raw 和 Refined，不允许 fallback；
+- 固定 ProtoMotions revision 并写入 manifest；
+- 使用 Raw/Refined 两者所需值中较大的共同 ground shift；
+- 强制 frame indices、object trajectory 和 contact schedule 成对一致；
+- 强制 tensor 的 object/contact 列 `318:386` 逐位相同；
+- 保存 converter、数据、物体资产和依赖 SHA-256。
 
-主要产物：
+若 `excluded_pairs.csv` 非空，先判断是否真的是文件损坏、缺资产或 schema
+错误。目标是所有规范且可转换的序列都运行；不能以 motion 难度或结果差为排除
+理由。
 
-```text
-policy_ab_manifest.json
-eligible_pairs.csv
-excluded_pairs.csv
-eligible/raw/*.pt
-eligible/full/*.pt
-data_hashes_raw.txt
-data_hashes_full.txt
-asset_hashes.txt
-metadata/
-conversion_logs/
-```
+## 6. CPU preflight
 
-若存在技术排除，首次命令会在写完清单后非零退出。先人工检查
-`excluded_pairs.csv`。只有缺文件、损坏、缺资产、非双手双物体或 schema
-不支持等预注册技术原因可接受；不能按 motion quality 或 rollout 成功率排除。
-接受后不必重做转换，在下一节显式设置 `ACCEPT_EXCLUSIONS=1`。若要从头重转，
-使用新的空 `POLICY_DATA_ROOT`，不要把新旧 staging 混合。
-
-## 6. 解析正式 env/minibatch
-
-每个 environment 固定绑定 `env_id % N` 对应的 reference。为了每条 reference
-训练副本完全相等，同时保持原 recipe 的每 epoch 四个 PPO minibatches：
-
-```bash
-N=$(python - "$POLICY_DATA_ROOT/policy_ab_manifest.json" <<'PY'
-import json, sys
-print(len(json.load(open(sys.argv[1]))["references"]))
-PY
-)
-TARGET_ENVS=2048
-REPLICAS=$((TARGET_ENVS / N))
-test "$REPLICAS" -ge 1
-NUM_ENVS=$((N * REPLICAS))
-MINIBATCH_SIZE=$((NUM_ENVS * 8))
-echo "N=$N replicas=$REPLICAS envs=$NUM_ENVS minibatch=$MINIBATCH_SIZE"
-```
-
-因为 horizon 为 32，PPO batch 是 `32*NUM_ENVS`；上式令 minibatch 为其
-四分之一。例如 N=94 时是 1974 env / 15792 minibatch。
-
-服务器 agent 可根据 24 GiB 显存修改 `TARGET_ENVS`，但最终必须满足：
-
-- `NUM_ENVS=N*k` 且 `k>=1`；
-- `(32*NUM_ENVS) % MINIBATCH_SIZE == 0`；
-- `MINIBATCH_SIZE % 4 == 0`（当前 `seq_len=4`）；
-- Raw/Full 和 4 seeds 使用相同的解析值；
-- smoke 与正式 run manifest 记录实际值。
-
-不要追求 `nvidia-smi` 显示 100% memory。应在完成至少 200 个 epoch 的 warmup
-后选择不会 OOM 的最大 `N*k`，为 PhysX、checkpoint 保存和临时 tensor 保留约
-1.5--2 GiB。建议以 `N*floor(target/N)` 从低到高试探；所有 8 个正式 worker
-冻结为同一个最终值。训练代码默认关闭逐 step scalar diagnostics，并把资源监控
-交给外部调度器，避免用日志换取显存/FPS。
-
-## 7. CPU preflight（第一道硬门）
+这里的 `NUM_ENVS` 只需不小于全数据集 reference 数，以便一次校验所有文件；
+它不要求能被 reference 数整除，因为正式训练每个 job 只有一个 reference。
 
 ```bash
 cd "$INTERMIMIC_ROOT"
-ACCEPT_EXCLUSIONS=0 \
-NUM_ENVS="$NUM_ENVS" \
-MINIBATCH_SIZE="$MINIBATCH_SIZE" \
-conda run --no-capture-output -n "$CONDA_ENV" \
-  bash isaacgym/scripts/preflight_theia_policy_ab.sh "$POLICY_DATA_ROOT"
+NUM_ENVS=2048 \
+MINIBATCH_SIZE=16384 \
+CONDA_ENV="$CONDA_ENV" \
+bash isaacgym/scripts/preflight_theia_policy_ab.sh "$POLICY_DATA_ROOT"
 ```
 
-若已人工接受预注册技术排除，改为 `ACCEPT_EXCLUSIONS=1`。必须看到：
+若人工确认了预注册技术排除，才可加 `ACCEPT_EXCLUSIONS=1`。必须生成：
 
 ```text
-CPU preflight passed
 PRECHECK_READY.json
+policy_ab_validation.json
+raw_dataset_validation.json
+full_dataset_validation.json
+protomotions_version.json
 ```
 
-该门会复算 pair/data/asset hash、检查 `[T,594]`、finite/quaternion/contact、
-双手接触、足部碰撞和 Raw/Full 逐列配对。失败时不能关闭 validator。
-`policy_ab_validation.json` 还会记录每条 pair 的
-`mean_body_position_delta_cm` 和 `contact_hand_position_delta_cm`，并在整个
-Raw/Full 人体参考集合逐位相同时直接失败。这两个字段只用于训练前确认 tactile
-refinement 确实进入了 policy 数据，不参与筛选序列或事后调参。
+该门还会确认 Raw/Refined 的人体参考确实不同、object/contact supervision
+相同、数据 finite、四元数有效、手—物体标签一致和 FK 可接受。
 
-## 8. GPU smoke（第二道硬门）
+## 7. GPU smoke 与 4090 环境数
 
-先在不会与正式结果混用的目录运行：
+不要直接用正式目录调试。先选一个预先固定的 reference：
 
 ```bash
-CUDA_VISIBLE_DEVICES=<one_gpu> \
-NUM_ENVS="$NUM_ENVS" \
-MINIBATCH_SIZE="$MINIBATCH_SIZE" \
-ACCEPT_EXCLUSIONS="${ACCEPT_EXCLUSIONS:-0}" \
+SMOKE_REF=$(head -n 1 /server/manifests/s1_policy_candidates.txt)
+SMOKE_REF=$(basename "$SMOKE_REF")
+
+CUDA_VISIBLE_DEVICES=0 \
 CONDA_ENV="$CONDA_ENV" \
-bash isaacgym/scripts/smoke_theia_policy_ab.sh \
-  "$POLICY_DATA_ROOT" \
-  "$EXPERIMENT_ROOT/_smoke"
+ALLOW_PROTOCOL_OVERRIDE=1 \
+TRAIN_EPOCHS=2 \
+K=1 \
+NUM_ENVS=32 \
+MINIBATCH_SIZE=256 \
+TARGET_ENVS=32 \
+bash isaacgym/scripts/run_theia_policy_reference.sh \
+  "$SMOKE_REF" "$POLICY_DATA_ROOT" \
+  "$EXPERIMENT_ROOT/_smoke_quick"
 ```
 
-默认对 Raw/Full 各执行：
-
-- 50 epoch fresh；
-- 从完整 checkpoint 恢复后再跑 50 epoch；
-- 1 epoch Stage-B full-sequence fine-tune；
-- 全部 references 的 K=10 正式 evaluator 完整性与显存测试。
-
-它会检查 checkpoint epoch、NaN/Inf、正 FPS、完整评测 cohort，以及 Raw/Full
-FPS 比不低于 0.70。必须得到：
+然后在另一个 smoke 目录测试正式显存规模。8×4090 24 GiB 的起点是：
 
 ```text
-_smoke/SMOKE_READY.json
+NUM_ENVS=2048
+MINIBATCH_SIZE=16384
 ```
 
-若服务器 agent 为节省首次管线调试时间，可先用
-以下独立目录验证代码连通性：
+若 OOM，依次尝试 1792、1536、1280、1024；默认 minibatch 可始终取
+`NUM_ENVS*8`。要求：
 
-```bash
-CUDA_VISIBLE_DEVICES=<one_gpu> \
-NUM_ENVS="$NUM_ENVS" \
-MINIBATCH_SIZE="$MINIBATCH_SIZE" \
-ACCEPT_EXCLUSIONS="${ACCEPT_EXCLUSIONS:-0}" \
-CONDA_ENV="$CONDA_ENV" \
-SMOKE_BOOTSTRAP_EPOCHS=2 \
-SMOKE_FIRST_CHUNK_EPOCHS=1 \
-SMOKE_EVAL_K=1 \
-bash isaacgym/scripts/smoke_theia_policy_ab.sh \
-  "$POLICY_DATA_ROOT" "$EXPERIMENT_ROOT/_smoke_quick"
+```text
+(NUM_ENVS * 32) % MINIBATCH_SIZE == 0
+MINIBATCH_SIZE % 4 == 0
 ```
 
-快速 smoke 与正式 smoke **绝不能复用输出目录**。脚本会冻结
-`smoke_spec.txt` 并拒绝混用不同参数。正式 8-run 启动前，仍需在全新的
-`"$EXPERIMENT_ROOT/_smoke"` 完成默认 100-epoch、K=10 smoke。
+至少跑 50--100 epochs 后再确认显存/FPS。为 PhysX、checkpoint 和临时 tensor
+保留约 1.5--2 GiB，不以 `nvidia-smi` 必须占满 24 GiB 为目标。正式 Raw 与
+Refined、所有 GPU/集群使用同一个最终环境数。
 
-## 9. 单 run 正式入口
+快速 smoke 的 `pair_spec` 与正式 1100-epoch 协议不同，聚合器会拒绝它进入
+论文结果。
 
-接口：
+## 8. 按集群/GPU 切分 reference lists
 
-```bash
-NUM_ENVS="$NUM_ENVS" \
-MINIBATCH_SIZE="$MINIBATCH_SIZE" \
-CONDA_ENV="$CONDA_ENV" \
-bash isaacgym/scripts/run_theia_policy_seed.sh \
-  CONDITION SEED CONDITION_DATA_DIR \
-  "$POLICY_DATA_ROOT/policy_ab_manifest.json" \
-  "$EXPERIMENT_ROOT"
-```
+列表每行可写 reference ID 或原始目录路径，允许空行和 `#` 注释。全部列表的
+并集必须等于 frozen eligible IDs，且彼此不重叠。可由服务器 agent 根据各集群
+空闲 GPU 数和预计序列长度做负载均衡。
 
 示例：
 
+```text
+/server/manifests/cluster_a_gpu0.txt
+/server/manifests/cluster_a_gpu1.txt
+...
+/server/manifests/cluster_b_gpu0.txt
+```
+
+启动前用仓库脚本对照 frozen manifest 检查所有集群列表的并集：
+
 ```bash
-NUM_ENVS="$NUM_ENVS" \
-MINIBATCH_SIZE="$MINIBATCH_SIZE" \
+python isaacgym/scripts/validate_theia_reference_lists.py \
+  --pair-manifest "$POLICY_DATA_ROOT/policy_ab_manifest.json" \
+  --output-json /server/manifests/s1_policy_shards.json \
+  /server/manifests/cluster_a_gpu*.txt \
+  /server/manifests/cluster_b_gpu*.txt
+```
+
+只有 `valid: true` 才能启动。它会拒绝 missing、extra、单列表重复和跨集群
+duplicate，并冻结每个 list 的 SHA-256。worker 还会在启动时再次拒绝本列表的
+重复 ID 和 manifest 外 ID。
+
+## 9. 正式单 GPU worker
+
+每张 GPU 对自己的列表顺序运行。每个 reference 内部先训练 Raw 一次，再训练
+Refined 一次：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
 CONDA_ENV="$CONDA_ENV" \
-bash isaacgym/scripts/run_theia_policy_seed.sh \
-  raw 0 "$POLICY_DATA_ROOT/eligible/raw" \
-  "$POLICY_DATA_ROOT/policy_ab_manifest.json" "$EXPERIMENT_ROOT"
+NUM_ENVS=2048 \
+MINIBATCH_SIZE=16384 \
+SHARD_NAME=cluster_a_gpu0 \
+bash isaacgym/scripts/run_theia_policy_reference_list.sh \
+  /server/manifests/cluster_a_gpu0.txt \
+  "$POLICY_DATA_ROOT" \
+  "$EXPERIMENT_ROOT"
 ```
 
-该入口自动：
+8 张 GPU 启动 8 个这样的进程，每个进程使用不同 list 和
+`CUDA_VISIBLE_DEVICES`。不同集群可以同时启动。不要在同一 GPU 上叠加多个
+Isaac Gym worker；一个 2048-env worker 已用于充分占用该卡。
 
-1. 复算 condition 数据 hash 并对照 frozen manifest；
-2. 冻结 run spec；
-3. 从随机权重完成 20k Hybrid/RSI；
-4. 完整恢复 optimizer/normalizer/epoch/frame 后完成 2k Start/full-sequence；
-5. 保留固定 milestone；
-6. 对 final checkpoint 执行每 reference 恰好 K=10 的完整 cohort；
-7. 输出 reference-level 四项 InterMimic 指标。
-
-重复同一命令会读取 checkpoint 真实 epoch，只补剩余预算。若 dataset、
-condition、seed、预算、配置或源码 fingerprint 改变，会拒绝把不兼容状态混入
-同一 run root。入口默认还会硬性拒绝 seeds 0--3、20k+2k epochs、K=10、
-30 FPS 和 `EVAL_SEED=10000+training_seed` 之外的参数；仅隔离的代码微测可显式
-设置 `ALLOW_NONFORMAL_PROTOCOL=1`，这类目录禁止进入正式聚合。
-
-评测先写入 `.attempt.*` 临时目录，所有 CSV/JSON 和哈希验证成功后才发布到
-`evaluation/final`，且 `validation.json` 最后落盘。中断的 attempt 会保留用于
-排障，不会被当成有效结果；不要手工复制或编辑正式评测文件。
-
-## 10. 多 GPU 调度脚本的要求
-
-8×RTX 4090 的首选拓扑是 8 卡同波，每张卡运行一个完整数据集 policy：
+正式命令不要设置以下变量：
 
 ```text
-raw/seed_0   full/seed_0
-raw/seed_1   full/seed_1
-raw/seed_2   full/seed_2
-raw/seed_3   full/seed_3
+ALLOW_PROTOCOL_OVERRIDE
+TRAIN_EPOCHS
+TRAINING_SEED
+EVAL_SEED
+K
 ```
 
-这里的并行单位是 `condition × seed`，不是 sequence。禁止把不同 S1 序列分给
-不同 GPU 独立训练；那会得到 8 个只覆盖子集的 policy，而不是一个覆盖全部 S1
-的 policy。若主机 CPU/RAM 或 PCIe 使 8 路吞吐下降，再改为 4 卡两波或更少
-GPU 多波。
-
-调度器必须：
-
-- 为每个 worker 设置清晰的 `CUDA_VISIBLE_DEVICES`；
-- 不在 worker 间共享 checkpoint/output path；
-- 传播相同 `NUM_ENVS`、`MINIBATCH_SIZE`、epoch 和 K；
-- 捕获每个 worker exit code；任一失败则总 job 非零；
-- 允许重新运行失败 worker，不能删除已完成的其他 run；
-- 监控主机 RAM、GPU memory、温度、利用率和每 run FPS；
-- 8 路并发 FPS 若低于单路 smoke 的 70%，改为分波，不改变实验预算；
-- 不使用 DDP 把一个 policy 跨多卡训练，除非另行完整验证；本实验的自然并行
-  单位是 condition × seed。
-
-服务器调度脚本本身也应保存到实验目录并记录 SHA-256。
-
-## 11. Checkpoint 与评测产物
-
-每个 run：
+脚本默认并硬检查：
 
 ```text
-<condition>/seed_<n>/
-  run_spec.txt
-  data_manifest.json
-  policy_seed.log
-  bootstrap/theia_smplx/nn/
-    mimic.pth
-    mimic_epoch_00002000.pth
-    mimic_epoch_00005000.pth
-    mimic_epoch_00010000.pth
-    mimic_epoch_00015000.pth
-    mimic_epoch_00020000.pth
-  finetune/theia_smplx/nn/
-    mimic.pth
-    mimic_epoch_00022000.pth
-  evaluation/final/
-    manifest.txt
-    eval.log
-    episodes.csv
-    episode_summary.json
-    termination_causes.csv
-    per_reference.csv
-    validation.json
-    summary.json
+TRAIN_EPOCHS=1100
+TRAINING_SEED=0
+EVAL_SEED=10000
+K=10
+TORCH_DETERMINISTIC=0
 ```
 
-训练期每 250 epoch 覆盖保存 `mimic.pth` 供断点恢复，并保留上述固定
-milestone；正式配置关闭了约 134 MB 的 reward-best 反复写盘。主表禁止选择
-reward-best/test-best。
+`TORCH_DETERMINISTIC=0` 与此前成功 launcher 一致且更快；Raw/Refined 仍共享
+固定 seed 和完全相同的随机协议。重复相同 worker 命令会从完整 checkpoint
+恢复，已经完成的训练和已 hash 验证的评测会跳过。
 
-若需要 learning curve，可用同一个正式 evaluator 对固定 milestone 运行，并把
-结果写入 `evaluation/milestone_<epoch>/`；不能根据中间 test 结果选择主
-checkpoint。主审稿人要求的最低 Raw-vs-Full 结果只依赖 final 22k。
+## 10. 多集群结果汇集
 
-## 12. 一键聚合并直接出表
+最好让所有集群写同一个可靠共享文件系统。如果各集群使用独立存储，最终必须把：
 
-8 个 final evaluation 全部成功后：
+```text
+EXPERIMENT_ROOT/references/<reference_id>/
+EXPERIMENT_ROOT/shards/
+```
+
+汇入一个中央 `EXPERIMENT_ROOT`。reference lists 不重叠，因此不应出现同名
+reference；若出现冲突，先比较 `pair_spec.txt` 和 hash，不能静默覆盖。
+
+每条完成的 reference 都必须有：
+
+```text
+references/<id>/PAIR_READY.json
+references/<id>/runs/raw/seed_0/evaluation/final/validation.json
+references/<id>/runs/full/seed_0/evaluation/final/validation.json
+```
+
+## 11. 一键聚合和论文产物
+
+全部结果汇集后：
 
 ```bash
 cd "$INTERMIMIC_ROOT"
-conda run --no-capture-output -n "$CONDA_ENV" \
-  python isaacgym/scripts/aggregate_theia_policy_ab.py \
+python isaacgym/scripts/aggregate_theia_policy_references.py \
   --experiment-root "$EXPERIMENT_ROOT" \
-  --pair-manifest "$POLICY_DATA_ROOT/policy_ab_manifest.json"
+  --pair-manifest "$POLICY_DATA_ROOT/policy_ab_manifest.json" \
+  --output-dir "$EXPERIMENT_ROOT/results"
 ```
 
-聚合器严格要求 `{raw,full} × seeds {0,1,2,3} × same references × K=10`，
-并交叉核验 8 个 `run_spec.txt` 的训练预算、env/minibatch、Git/source hashes、
-评测 pipeline 及 episodes/per-reference/summary artifact hashes。随后使用
-reference 等权、4-seed sample std，并做 10,000 次固定 RNG 的 crossed paired
-bootstrap。输出：
+默认要求 manifest 中每条 eligible reference 的 Raw/Refined 正式结果都存在；
+缺一条即失败。若只想检查某个集群的中间进度，可加该集群的
+`--reference-list`，但中间结果不能作为全 S1 论文表。
+
+产物：
 
 ```text
-results/results.md
-results/per_reference_all.csv
-results/per_seed.csv
-results/paired_results.csv
-results/bootstrap_results.json
-results/summary.json
-results/main_table.tex
-results/spatial_table.tex
+results/per_reference_paired.csv  # 每条序列的 Raw/Refined 配对结果
+results/paired_results.csv        # 全 S1 均值、paired CI、差值
+results/by_pose.csv               # height/variation 分组的同一组标准指标
+results/summary.json              # 机器可读统计与协议
+results/results.md                # 可直接审阅
+results/main_table.tex            # 论文主表
 ```
 
-`results.md` 是服务器 agent 最先回传给作者的简明结果；两份 `.tex` 可直接
-复制/`\input` 到论文。不要手工改数字。
+主表只放 InterMimic 常用四项：
 
-## 13. 正式指标
-
-- **Succ. (%)**：每条 reference 的 10 个 completed rollout 至少一个成功，
-  再对 references 等权平均。
-- **Duration (s)**：每条 reference 最长 trial 的 steps / 30，再等权平均。
-- **\(E_h\) (cm)**：同一 best trial 的 21-key-body tracking error。
-- **\(E_o\) (cm)**：同一 best trial 的双物体 surface-point tracking error。
-
-同 duration 时按较小 \(E_h+E_o\)，再按较小 trial ID 破同分。四项均为
-InterMimic 风格 reference-imitation 指标。`semantic_success`、reach/contact、
-stable grasp、wrong contact 和终态误差只作内部诊断，不进入论文主表。
-
-正式 evaluator 使用 `theia_policy_eval.yaml`，其 Start/full-sequence 和
-ET/IET 开关与 Stage-B 保持一致。项目有意关闭 GT contact-miss hard termination，
-允许可行但与 GT 接触时序不同的策略；论文 methods/caption 必须披露这一
-termination 变体，不能声称逐项复现了 InterMimic 未公开的官方 rollout budget。
-
-Raw 也使用与 Full 完全相同的 measured contact schedule 和 object trajectory；
-因此论文中的准确条件名应是“Raw kinematics + shared object/contact
-supervision”与“Tactile-refined kinematics + shared object/contact
-supervision”。这种配对设计用于把成功率差异归因于人体/手部 refinement，
-不能在看到结果后为 Raw/Full 分别调整接触权重或终止条件。
-
-## 14. 最终 Go / No-Go
-
-以下全部存在且 valid 才可正式启动：
-
-- 父 Theia 和 InterMimic 两个仓库的所需提交；
-- frozen candidate list 和可审计的 L/V metadata；
-- `policy_ab_manifest.json`；
-- `PRECHECK_READY.json`；
-- `SMOKE_READY.json`；
-- Raw/Full 相同 N、env、minibatch、seeds、epochs 和 K；
-- 每张计划使用的 GPU 已通过 CUDA/Isaac 启动；
-- 调度器有独立目录、退出码传播和恢复逻辑。
-
-代码静态协议测试：
-
-```bash
-python isaacgym/scripts/test_theia_training_protocol.py
-python isaacgym/scripts/test_theia_policy_results.py
+```text
+RefSucc@10 ↑ | Duration ↑ | E_h ↓ | E_o ↓
 ```
 
-当前本机已经用一条真实 339-frame S1 sequence 完成 paired conversion、CPU
-preflight，以及 Raw/Full 各 `1 epoch fresh + 1 epoch full-state resume +
-1 epoch Stage-B + K=1 evaluation` 的微型 GPU 闭环；正式单
-condition/seed wrapper 的从零、恢复、目录冻结、评测和幂等重跑也已实测。
-合成结果测试另行覆盖了 K-trial 汇总、配对 bootstrap 和表格生成。服务器全部
-数据仍未知，因此服务器 `PRECHECK_READY.json` 和默认 100-epoch
-`SMOKE_READY.json` 仍是正式训练的最后两道必需门，不能由本机单序列微测替代。
+`Episode completion` 放在补充结果中。它是 K 个 rollout 的完成比例，可说明
+policy 稳定性，但不替代 InterMimic 的 reference coverage。
+
+## 12. 与先前成功单序列代码的差异审计
+
+已验证的早期基线提交是：
+
+```text
+3bc54a5 Add dual-object SMPLX interaction policy with residual control
+```
+
+其保存 checkpoint 位于 epoch 1100。当前逐 reference 配方继续使用其核心：
+
+本机复算还确认，早期成功训练所用的
+`theia_data/sub1_CupBlue+KettleGreen_S1L33P01T0508V01.pt`
+SHA-256 为
+`8b2bc64a7e991573e9198b0969a440889005db2e47165fe1a681cabdcbf9c790`，
+与当前 paired converter 生成的 Refined 文件逐字节相同；对应 checkpoint
+epoch 为 1100，SHA-256 为
+`31df8385c8473f27147ebd89d1be6d9facaea4da768ee55f7cc51cfe2449fa8a`。
+因此 1100 是 Refined 单序列已有成功证据的预算，不是任意缩短；Raw 是否能在
+同一预算学会正是本次 comparison 的测量对象。
+
+| 项目 | 早期成功配方 | 当前正式逐 reference 配方 |
+|---|---|---|
+| 网络 | `[1024,1024,512]` | 不变 |
+| PPO LR / clip | `2e-5 / 0.2` | 不变 |
+| horizon / mini epochs | `32 / 6` | 不变 |
+| 初始化 | Hybrid, rollout 100 | 不变 |
+| 训练预算 | 成功 checkpoint epoch 1100 | 固定 1100 |
+| contact reward | legacy multiplicative | 保留 |
+| wrist/object phase reset | 已硬编码使用 | 保留并配置化 |
+
+保留的必要 bug 修复：
+
+- dual-object 和多 reference 的正确 actor/data 绑定；
+- action 以 `t+1` reference 为 PD target，并受 residual/XML 限位约束；
+- 右腕 DOF 解析、四元数角速度、`initVel:false`；
+- reset 后 observation 刷新和 batched reset；
+- Raw/Refined 共同 ground alignment；
+- 物体密度字典带默认值，不要求精确真实密度；
+- 手与目标物体的正确配对；
+- 去掉会虚增失败轨迹 reward 的 object reward floor；
+- evaluator 的 active-env cohort、恰好 K trials 和 episode-level error 聚合；
+- FK/data fail-fast。
+
+为降低失败风险和开销，当前明确不采用：
+
+- Physical Buffer/PSI 状态替换（`physicalBufferSize: 1`）；
+- 因错过 GT contact timing 而 hard terminate；
+- approximate wrong-contact penalty；
+- exact actor-pair contact 参与训练；
+- terminal semantic bonus；
+- reward-best checkpoint 筛选；
+- 逐 step diagnostics、逐 step tensor `.item()` 和 trajectory dump；
+- 20k+2k 通用 policy、多 training seeds。
+
+训练仍保留弱 contact shaping、wrist tracking 和 object contact-phase tracking。
+这不是额外的 contact ablation，而是早期成功配方已有控制目标的修正版。Raw 与
+Refined 使用完全相同的 contact schedule 和权重；Refined 的潜在优势只能来自
+更物理可实现的人体/手部参考几何，而不是给 Raw 人为增加惩罚。无法诚实保证
+Refined 一定显著更高；若结果不显著，不能通过修改 Raw 专属配置制造差距。
+
+## 13. 训练期记录与速度
+
+正式训练关闭：
+
+- `enableTrainingDiagnostics`；
+- `enableStepDiagnostics`；
+- exact-contact evaluation during training；
+- reward-best 额外 checkpoint；
+- Physical Buffer 大状态缓存。
+
+保留：
+
+- 标准 `train.log` 和 TensorBoard scalar；
+- 每 50 epochs 一次非阻塞资源 telemetry；
+- 每 500 epochs 覆盖写一个 rolling checkpoint；
+- epoch 1100 final checkpoint；
+- 一次 K=10 评测的 CSV/JSON/hash。
+
+这些保留项用于断点恢复和 rebuttal 证据链，开销远小于 PhysX/RL rollout。
+每个 run 不保存图像、视频或逐步轨迹。可视化应只对少量选定 policy 单独 play，
+不要放在批量训练 worker 中。

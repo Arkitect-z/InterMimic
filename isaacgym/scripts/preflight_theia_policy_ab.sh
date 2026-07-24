@@ -2,7 +2,7 @@
 # CPU-only, fail-fast preflight for the frozen Raw/Full policy dataset.
 #
 # Usage:
-#   NUM_ENVS=<N-times-replicas> bash isaacgym/scripts/preflight_theia_policy_ab.sh \
+#   NUM_ENVS=<at-least-N> bash isaacgym/scripts/preflight_theia_policy_ab.sh \
 #     /data/theia_policy_ab
 set -euo pipefail
 
@@ -14,11 +14,11 @@ export PYTHONPATH="$REPO_ROOT/isaacgym/src:$REPO_ROOT:${PYTHONPATH:-}"
 DATA_ROOT_INPUT="${1:-}"
 NUM_ENVS="${NUM_ENVS:-}"
 if [ -z "$DATA_ROOT_INPUT" ] || [ ! -d "$DATA_ROOT_INPUT" ]; then
-    echo "Usage: NUM_ENVS=<balanced> bash $0 /path/to/prepared-policy-data"
+    echo "Usage: NUM_ENVS=<at-least-reference-count> bash $0 /path/to/prepared-policy-data"
     exit 1
 fi
 if ! [[ "$NUM_ENVS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "NUM_ENVS must be set to a positive, reference-balanced integer"
+    echo "NUM_ENVS must be set to a positive integer"
     exit 1
 fi
 MINIBATCH_SIZE="${MINIBATCH_SIZE:-$((NUM_ENVS * 8))}"
@@ -67,12 +67,9 @@ print(len(references), int(manifest.get("excluded_count", 0)))
 PY
 )
 if [ "$NUM_ENVS" -lt "$REFERENCE_COUNT" ]; then
-    echo "NUM_ENVS=$NUM_ENVS cannot cover $REFERENCE_COUNT references"
-    exit 1
-fi
-if [ $((NUM_ENVS % REFERENCE_COUNT)) -ne 0 ]; then
-    echo "NUM_ENVS=$NUM_ENVS must be divisible by N=$REFERENCE_COUNT."
-    echo "Formal training requires exactly balanced reference replicas."
+    echo "NUM_ENVS=$NUM_ENVS is too small for the full-dataset CPU validator."
+    echo "Set NUM_ENVS to at least $REFERENCE_COUNT; per-reference training"
+    echo "still uses all NUM_ENVS environments for its single reference."
     exit 1
 fi
 if [ "$EXCLUDED_COUNT" -gt 0 ] && [ "${ACCEPT_EXCLUSIONS:-0}" != "1" ]; then
@@ -82,7 +79,11 @@ if [ "$EXCLUDED_COUNT" -gt 0 ] && [ "${ACCEPT_EXCLUSIONS:-0}" != "1" ]; then
     exit 1
 fi
 
+python "$SCRIPT_DIR/check_theia_protomotions.py" \
+    --output-json "$DATA_ROOT/protomotions_version.json"
+
 python "$SCRIPT_DIR/test_theia_training_protocol.py"
+python "$SCRIPT_DIR/test_theia_reference_pipeline.py"
 
 python "$SCRIPT_DIR/validate_theia_policy_ab.py" \
     --raw-dir "$RAW_DIR" \
@@ -143,6 +144,7 @@ result = {
             "policy_ab_validation.json",
             "raw_dataset_validation.json",
             "full_dataset_validation.json",
+            "protomotions_version.json",
         )
     },
 }
@@ -153,5 +155,5 @@ PY
 
 echo "CPU preflight passed: references=$REFERENCE_COUNT num_envs=$NUM_ENVS"
 echo "PPO minibatch=$MINIBATCH_SIZE (four minibatches per epoch by default)"
-echo "Next gate: paired 100-epoch GPU smoke test."
+echo "Next gate: isolated per-reference Raw/Refined GPU smoke test."
 echo "Receipt: $DATA_ROOT/PRECHECK_READY.json"

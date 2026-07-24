@@ -2,8 +2,8 @@
 
 > **范围提示（2026-07-24）：**本文档保留为单 condition 生产训练的历史
 > handoff。论文的 paired S1 Raw-vs-Full 实验禁止使用
-> `run_theia_server.sh`，因为它不冻结配对 manifest，也不执行四 seed、
-> \(K=10\) 的 InterMimic 聚合。正式论文实验请只遵循
+> `run_theia_server.sh`，因为它不是逐 reference、Raw/Refined 各训练一次的
+> list-sharded \(K=10\) 协议。正式论文实验请只遵循
 > `HANDOFF_SERVER_POLICY_AB.md`。
 
 更新时间：2026-07-24（Asia/Shanghai）

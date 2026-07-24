@@ -53,6 +53,8 @@ NUM_ENVS="${NUM_ENVS:-2048}"
 MINIBATCH_SIZE="${MINIBATCH_SIZE:-}"
 SEED="${SEED:-42}"
 MOTION_FILE="${MOTION_FILE:-}"
+CFG_ENV_OVERRIDE="${CFG_ENV_OVERRIDE:-}"
+TORCH_DETERMINISTIC="${TORCH_DETERMINISTIC:-1}"
 HORIZON_LENGTH=32
 SEQ_LEN=4
 
@@ -65,6 +67,20 @@ case "$STAGE" in
         ;;
     *)
         echo "Unknown stage '$STAGE' (expected bootstrap or finetune)"
+        exit 1
+        ;;
+esac
+if [ -n "$CFG_ENV_OVERRIDE" ]; then
+    CFG_ENV="$CFG_ENV_OVERRIDE"
+fi
+if [ ! -f "$CFG_ENV" ]; then
+    echo "Environment config not found: $CFG_ENV"
+    exit 1
+fi
+case "$TORCH_DETERMINISTIC" in
+    0|1) ;;
+    *)
+        echo "TORCH_DETERMINISTIC must be 0 or 1"
         exit 1
         ;;
 esac
@@ -165,6 +181,7 @@ python isaacgym/scripts/validate_theia_dataset.py "${VALIDATOR_ARGS[@]}"
     echo "minibatch_size=$MINIBATCH_SIZE"
     echo "max_iterations=$MAX_ITERATIONS"
     echo "seed=$SEED"
+    echo "torch_deterministic=$TORCH_DETERMINISTIC"
     echo "motion_file=${MOTION_FILE:-theia_data}"
     echo "git_commit=$(git rev-parse HEAD)"
     echo "git_diff_sha256=$(git diff --binary | sha256sum | awk '{print $1}')"
@@ -182,13 +199,15 @@ ARGS=(
     --cfg_env "$CFG_ENV"
     --cfg_train isaacgym/src/intermimic/data/cfg/train/rlg/theia.yaml
     --headless
-    --torch_deterministic
     --seed "$SEED"
     --num_envs "$NUM_ENVS"
     --minibatch_size "$MINIBATCH_SIZE"
     --max_iterations "$MAX_ITERATIONS"
     --output_path "$OUTPUT_PATH"
 )
+if [ "$TORCH_DETERMINISTIC" = "1" ]; then
+    ARGS+=(--torch_deterministic)
+fi
 if [ "$CHECKPOINT_MODE" = "resume" ]; then
     ARGS+=(--checkpoint "$CHECKPOINT")
 fi

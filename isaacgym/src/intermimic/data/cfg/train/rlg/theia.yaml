@@ -59,7 +59,10 @@ params:
     # Avoid eight workers repeatedly writing ~134 MB checkpoints in lockstep.
     save_reward_best: False
     save_best_after: 50
-    save_frequency: 250
+    # One rolling checkpoint every 500 epochs plus the final checkpoint keeps
+    # interruption recovery while halving network-filesystem traffic for the
+    # 1100-epoch per-reference rebuttal jobs.
+    save_frequency: 500
     print_stats: True
     # Resource telemetry is sampled without blocking and only periodically.
     # GPU utilization is monitored by the external multi-GPU scheduler.

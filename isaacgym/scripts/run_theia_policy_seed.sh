@@ -89,6 +89,8 @@ FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-2000}"
 K="${K:-10}"
 EVAL_SEED="${EVAL_SEED:-$((10000 + TRAINING_SEED))}"
 ALLOW_NONFORMAL_PROTOCOL="${ALLOW_NONFORMAL_PROTOCOL:-0}"
+TRAIN_ENV_CONFIG="${TRAIN_ENV_CONFIG:-isaacgym/src/intermimic/data/cfg/theia_full_train.yaml}"
+PROTOCOL_MODE="${PROTOCOL_MODE:-legacy_universal}"
 
 if ! [[ "$TARGET_ENVS" =~ ^[1-9][0-9]*$ ]]; then
     echo "TARGET_ENVS must be a positive integer, got '$TARGET_ENVS'"
@@ -98,8 +100,12 @@ if ! [[ "$BOOTSTRAP_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
     echo "BOOTSTRAP_EPOCHS must be a positive integer"
     exit 1
 fi
-if ! [[ "$FINETUNE_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "FINETUNE_EPOCHS must be a positive integer"
+if ! [[ "$FINETUNE_EPOCHS" =~ ^[0-9]+$ ]]; then
+    echo "FINETUNE_EPOCHS must be a non-negative integer"
+    exit 1
+fi
+if [ ! -f "$TRAIN_ENV_CONFIG" ]; then
+    echo "Training environment config not found: $TRAIN_ENV_CONFIG"
     exit 1
 fi
 if ! [[ "$K" =~ ^[1-9][0-9]*$ ]]; then
@@ -117,17 +123,38 @@ case "$ALLOW_NONFORMAL_PROTOCOL" in
         exit 1
         ;;
 esac
-if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ]; then
-    EXPECTED_EVAL_SEED=$((10000 + TRAINING_SEED))
-    if [ "$TRAINING_SEED" -gt 3 ] \
-        || [ "$BOOTSTRAP_EPOCHS" -ne 20000 ] \
-        || [ "$FINETUNE_EPOCHS" -ne 2000 ] \
-        || [ "$K" -ne 10 ] \
-        || [ "$EVAL_SEED" -ne "$EXPECTED_EVAL_SEED" ]; then
-        echo "Formal protocol requires seeds 0..3, epochs 20000+2000,"
-        echo "K=10, and EVAL_SEED=10000+TRAINING_SEED."
-        echo "Use ALLOW_NONFORMAL_PROTOCOL=1 only for an isolated code test."
+case "$PROTOCOL_MODE" in
+    legacy_universal|single_reference_rebuttal) ;;
+    *)
+        echo "Unknown PROTOCOL_MODE '$PROTOCOL_MODE'"
         exit 1
+        ;;
+esac
+if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ]; then
+    if [ "$PROTOCOL_MODE" = "single_reference_rebuttal" ]; then
+        if [ "$TRAINING_SEED" -ne 0 ] \
+            || [ "$BOOTSTRAP_EPOCHS" -ne 1100 ] \
+            || [ "$FINETUNE_EPOCHS" -ne 0 ] \
+            || [ "$K" -ne 10 ] \
+            || [ "$EVAL_SEED" -ne 10000 ] \
+            || [ "$TRAIN_ENV_CONFIG" != \
+                "isaacgym/src/intermimic/data/cfg/theia_reference_train.yaml" ]; then
+            echo "Single-reference rebuttal protocol requires seed=0,"
+            echo "epochs=1100+0, K=10, eval seed=10000, and its frozen config."
+            exit 1
+        fi
+    else
+        EXPECTED_EVAL_SEED=$((10000 + TRAINING_SEED))
+        if [ "$TRAINING_SEED" -gt 3 ] \
+            || [ "$BOOTSTRAP_EPOCHS" -ne 20000 ] \
+            || [ "$FINETUNE_EPOCHS" -ne 2000 ] \
+            || [ "$K" -ne 10 ] \
+            || [ "$EVAL_SEED" -ne "$EXPECTED_EVAL_SEED" ]; then
+            echo "Legacy universal protocol requires seeds 0..3,"
+            echo "epochs 20000+2000, K=10, and eval seed=10000+seed."
+            echo "Use ALLOW_NONFORMAL_PROTOCOL=1 only for an isolated code test."
+            exit 1
+        fi
     fi
 fi
 REFERENCE_COUNT="$(
@@ -140,6 +167,12 @@ PY
 )"
 if [ "$REFERENCE_COUNT" -lt 1 ]; then
     echo "No .pt references found in $DATA_DIR"
+    exit 1
+fi
+if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ] \
+    && [ "$PROTOCOL_MODE" = "single_reference_rebuttal" ] \
+    && [ "$REFERENCE_COUNT" -ne 1 ]; then
+    echo "Single-reference rebuttal run requires exactly one reference."
     exit 1
 fi
 if [ -n "$REQUESTED_NUM_ENVS" ]; then
@@ -264,7 +297,7 @@ PY
 echo "Validated frozen $CONDITION data: sha256=$CONDITION_DATA_SHA256"
 
 python "$SCRIPT_DIR/validate_theia_dataset.py" \
-    --config isaacgym/src/intermimic/data/cfg/theia_full_train.yaml \
+    --config "$TRAIN_ENV_CONFIG" \
     --motion-file "$DATA_DIR" \
     --num-envs "$NUM_ENVS" \
     --manifest "$DATA_MANIFEST_TMP"
@@ -281,9 +314,11 @@ python "$SCRIPT_DIR/validate_theia_dataset.py" \
     echo "minibatch_size=$MINIBATCH_SIZE"
     echo "bootstrap_epochs=$BOOTSTRAP_EPOCHS"
     echo "finetune_epochs=$FINETUNE_EPOCHS"
+    echo "train_env_config=$TRAIN_ENV_CONFIG"
     echo "eval_k=$K"
     echo "eval_seed=$EVAL_SEED"
     echo "evaluation_fps=30"
+    echo "protocol_mode=$PROTOCOL_MODE"
     echo "allow_nonformal_protocol=$ALLOW_NONFORMAL_PROTOCOL"
     echo "git_commit=$(git rev-parse HEAD)"
     echo "git_diff_sha256=$(git diff HEAD --binary | sha256sum | awk '{print $1}')"
@@ -296,7 +331,7 @@ python "$SCRIPT_DIR/validate_theia_dataset.py" \
         isaacgym/scripts/train_theia_full.sh \
         isaacgym/scripts/validate_theia_dataset.py \
         isaacgym/src/intermimic/data/cfg/theia_policy_eval.yaml \
-        isaacgym/src/intermimic/data/cfg/theia_full_train.yaml \
+        "$TRAIN_ENV_CONFIG" \
         isaacgym/src/intermimic/data/cfg/theia_full_finetune.yaml \
         isaacgym/src/intermimic/data/cfg/train/rlg/theia.yaml \
         isaacgym/src/intermimic/env/tasks/intermimic.py \
@@ -448,6 +483,7 @@ run_to_epoch() {
         MAX_ITERATIONS="$remaining" \
         OUTPUT_PATH="$output_dir" \
         SEED="$TRAINING_SEED" \
+        CFG_ENV_OVERRIDE="$TRAIN_ENV_CONFIG" \
             bash "$SCRIPT_DIR/train_theia_full.sh" "$stage"
     else
         CHECKPOINT_MODE=fresh \
@@ -457,6 +493,7 @@ run_to_epoch() {
         MAX_ITERATIONS="$remaining" \
         OUTPUT_PATH="$output_dir" \
         SEED="$TRAINING_SEED" \
+        CFG_ENV_OVERRIDE="$TRAIN_ENV_CONFIG" \
             bash "$SCRIPT_DIR/train_theia_full.sh" "$stage"
     fi
 
@@ -494,10 +531,16 @@ if [ ! -f "$BOOTSTRAP_CKPT" ]; then
 fi
 
 FINETUNE_TARGET=$((BOOTSTRAP_EPOCHS + FINETUNE_EPOCHS))
-run_to_epoch finetune "$FINETUNE_DIR" "$FINETUNE_TARGET" "$BOOTSTRAP_CKPT"
-if [ ! -f "$FINETUNE_CKPT" ]; then
-    echo "Fine-tune checkpoint not found: $FINETUNE_CKPT"
-    exit 1
+if [ "$FINETUNE_EPOCHS" -gt 0 ]; then
+    run_to_epoch finetune "$FINETUNE_DIR" "$FINETUNE_TARGET" "$BOOTSTRAP_CKPT"
+    if [ ! -f "$FINETUNE_CKPT" ]; then
+        echo "Fine-tune checkpoint not found: $FINETUNE_CKPT"
+        exit 1
+    fi
+    FINAL_CKPT="$FINETUNE_CKPT"
+else
+    echo "[SKIP] Single-stage protocol: no full-sequence fine-tune"
+    FINAL_CKPT="$BOOTSTRAP_CKPT"
 fi
 
 env -u NUM_ENVS \
@@ -507,11 +550,11 @@ K="$K" \
 EVAL_SEED="$EVAL_SEED" \
 FPS=30 \
     bash "$SCRIPT_DIR/eval_theia_policy.sh" \
-    "$FINETUNE_CKPT" \
+    "$FINAL_CKPT" \
     "$DATA_DIR" \
     "$PAIR_MANIFEST" \
     "$EVALUATION_DIR"
 
 echo "Completed condition=$CONDITION seed=$TRAINING_SEED"
-echo "checkpoint=$FINETUNE_CKPT"
+echo "checkpoint=$FINAL_CKPT"
 echo "evaluation=$EVALUATION_DIR"

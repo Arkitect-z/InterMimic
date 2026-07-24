@@ -80,30 +80,33 @@ separately from the nominal GPU result. Every run writes `manifest.txt`,
 `eval.log`, `summary.json`, and per-episode `episodes.csv` under `evaluation/`.
 Evaluation exits nonzero unless it records exactly `NUM_ENVS` initial episodes.
 
-Server training for a completely unseen dataset is one command and starts from
-random policy weights:
+The rebuttal Raw-vs-Refined experiment trains each unseen S1 reference once
+per condition from random policy weights. A GPU worker consumes a server-side
+reference list:
 
 ```bash
-bash isaacgym/scripts/run_theia_server.sh
+CUDA_VISIBLE_DEVICES=0 \
+NUM_ENVS=2048 \
+MINIBATCH_SIZE=16384 \
+bash isaacgym/scripts/run_theia_policy_reference_list.sh \
+  /server/manifests/cluster_a_gpu0.txt \
+  /server/experiments/theia_policy_ab_data \
+  /server/experiments/theia_policy_ab_runs
 ```
 
-If the converted `.pt` files live outside the repository:
+For every listed reference, the worker trains one Raw and one
+measured-tactile-refined policy for 1100 Hybrid/RSI epochs using the same
+fixed seed, then performs K=10 parallel evaluation rollouts. The seed fixes
+the initialization; it is not a request for repeated training. Different
+cluster/GPU workers receive disjoint reference lists. Runs are resumable and
+training-time diagnostics are disabled. New objects use an approximate
+default density of 1000 kg/m³, so exact density entries are optional.
 
-```bash
-THEIA_DATA_DIR=/server/path/to/theia_pt \
-bash isaacgym/scripts/run_theia_server.sh
-```
-
-The launcher automatically enters the `intermimic` Conda environment, chooses
-a balanced environment count near 2048, runs data/CUDA/FK checks, trains 20,000
-Hybrid/RSI bootstrap epochs, restores the complete optimizer state for 2,000
-frame-0-to-end epochs, and performs balanced full-sequence evaluation. Running
-the same command after interruption resumes from the latest epoch. Override
-defaults with `TARGET_ENVS`, `BOOTSTRAP_EPOCHS`, `FINETUNE_EPOCHS`,
-`OUTPUT_ROOT`, `MIN_SUCCESS_RATE`, or `MIN_SEQUENCE_SUCCESS_RATE`. The default
-acceptance gates are 95% overall semantic success and 50% for the worst
-sequence. New objects use an approximate default density of 1000 kg/m³, so
-per-object density entries are optional.
+See [HANDOFF_SERVER_POLICY_AB.md](HANDOFF_SERVER_POLICY_AB.md) for frozen data
+preparation, the pinned ProtoMotions revision, list sharding, smoke tests and
+the final paired result aggregator. `run_theia_server.sh` and the 20k+2k
+full-dataset policy are retained only as a legacy universal-policy workflow;
+they are not the rebuttal A/B protocol.
 
 Do not promote a candidate by PPO reward alone. Report completion and final
 object pose per sequence. Actor-pair contact metrics are separate diagnostics;

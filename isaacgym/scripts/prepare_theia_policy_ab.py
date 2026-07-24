@@ -20,10 +20,13 @@ from pathlib import Path
 
 import torch
 
+from check_theia_protomotions import check_protomotions
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 THEIA_ROOT = REPO_ROOT.parents[1]
 DEFAULT_CONVERTER = THEIA_ROOT / "toolkit" / "scripts" / "theia2intermimic.py"
+DEFAULT_PROTOMOTIONS = THEIA_ROOT / "thirdparty" / "ProtoMotions"
 PAIR_COLUMNS = slice(318, 386)
 
 
@@ -315,11 +318,18 @@ def parse_args():
 def main():
     args = parse_args()
     converter = Path(args.converter).resolve()
+    protomotions = DEFAULT_PROTOMOTIONS.resolve()
     source_root = Path(args.source_root).resolve()
     objects_dir = Path(args.objects_dir).resolve()
     output_root = Path(args.output_root).resolve()
     if not converter.is_file():
         raise SystemExit(f"Converter not found: {converter}")
+    protomotions_report = check_protomotions(protomotions)
+    if not protomotions_report["valid"]:
+        raise SystemExit(
+            "ProtoMotions version check failed before conversion:\n"
+            + "\n".join(protomotions_report["errors"])
+        )
     if not source_root.is_dir():
         raise SystemExit(f"Source root not found: {source_root}")
     if not objects_dir.is_dir():
@@ -580,6 +590,7 @@ def main():
         "objects_dir": str(objects_dir),
         "converter": str(converter),
         "converter_sha256": sha256(converter),
+        "protomotions": protomotions_report,
         "target_fps": float(args.target_fps),
         "ground_clearance_m": float(args.ground_clearance),
         "ground_alignment": (
