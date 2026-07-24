@@ -14,8 +14,8 @@ cd "$REPO_ROOT"
 REFERENCE_ID="${1:-}"
 PREPARED_ROOT_INPUT="${2:-}"
 EXPERIMENT_ROOT_INPUT="${3:-}"
-if [ "${THEIA_PROTOMOTIONS_CHECKED:-0}" != "1" ]; then
-    python "$SCRIPT_DIR/check_theia_protomotions.py"
+if [ "${THEIA_SERVER_VERSIONS_CHECKED:-0}" != "1" ]; then
+    python "$SCRIPT_DIR/check_theia_server_versions.py"
 fi
 if ! [[ "$REFERENCE_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "reference_id must contain only letters, digits, dot, underscore, hyphen"

@@ -14,9 +14,9 @@ if [ ! -f "$LIST_PATH" ] || [ ! -d "$PREPARED_ROOT" ] \
 fi
 
 mkdir -p "$EXPERIMENT_ROOT"
-python "$SCRIPT_DIR/check_theia_protomotions.py" \
-    --output-json "$EXPERIMENT_ROOT/protomotions_version.json"
-export THEIA_PROTOMOTIONS_CHECKED=1
+python "$SCRIPT_DIR/check_theia_server_versions.py" \
+    --output-json "$EXPERIMENT_ROOT/repository_versions.json"
+export THEIA_SERVER_VERSIONS_CHECKED=1
 
 mapfile -t REFERENCES < <(
     python - "$LIST_PATH" "$PREPARED_ROOT/policy_ab_manifest.json" <<'PY'

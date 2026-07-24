@@ -1,10 +1,8 @@
 #!/bin/bash
-# Run one formal Theia policy condition and one training seed.
+# Internal runner for one Theia policy condition and one training seed.
 #
-# GPU assignment and process scheduling are intentionally external:
-#   CUDA_VISIBLE_DEVICES=0 bash isaacgym/scripts/run_theia_policy_seed.sh \
-#     raw 0 /data/theia_policy/raw /data/theia_policy/policy_ab_manifest.json \
-#     /results/theia_policy_ab
+# Formal rebuttal jobs must enter through run_theia_policy_reference.sh or
+# run_theia_policy_reference_list.sh, which freeze the v2/3000 contract.
 #
 # Usage:
 #   bash run_theia_policy_seed.sh \
@@ -90,7 +88,7 @@ K="${K:-10}"
 EVAL_SEED="${EVAL_SEED:-$((10000 + TRAINING_SEED))}"
 ALLOW_NONFORMAL_PROTOCOL="${ALLOW_NONFORMAL_PROTOCOL:-0}"
 TRAIN_ENV_CONFIG="${TRAIN_ENV_CONFIG:-isaacgym/src/intermimic/data/cfg/theia_full_train.yaml}"
-PROTOCOL_MODE="${PROTOCOL_MODE:-legacy_universal}"
+PROTOCOL_MODE="${PROTOCOL_MODE:-}"
 
 if ! [[ "$TARGET_ENVS" =~ ^[1-9][0-9]*$ ]]; then
     echo "TARGET_ENVS must be a positive integer, got '$TARGET_ENVS'"
@@ -126,35 +124,28 @@ esac
 case "$PROTOCOL_MODE" in
     legacy_universal|single_reference_rebuttal) ;;
     *)
-        echo "Unknown PROTOCOL_MODE '$PROTOCOL_MODE'"
+        echo "PROTOCOL_MODE must be set by a supported wrapper."
+        echo "Formal jobs must use run_theia_policy_reference_list.sh."
         exit 1
         ;;
 esac
+if [ "$PROTOCOL_MODE" = "legacy_universal" ] \
+    && [ "$ALLOW_NONFORMAL_PROTOCOL" != "1" ]; then
+    echo "legacy_universal is historical and cannot produce formal results."
+    echo "Set ALLOW_NONFORMAL_PROTOCOL=1 only for an isolated diagnostic."
+    exit 1
+fi
 if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ]; then
-    if [ "$PROTOCOL_MODE" = "single_reference_rebuttal" ]; then
-        if [ "$TRAINING_SEED" -ne 0 ] \
-            || [ "$BOOTSTRAP_EPOCHS" -ne 3000 ] \
-            || [ "$FINETUNE_EPOCHS" -ne 0 ] \
-            || [ "$K" -ne 10 ] \
-            || [ "$EVAL_SEED" -ne 10000 ] \
-            || [ "$TRAIN_ENV_CONFIG" != \
-                "isaacgym/src/intermimic/data/cfg/theia_reference_train.yaml" ]; then
-            echo "Single-reference rebuttal protocol requires seed=0,"
-            echo "epochs=3000+0, K=10, eval seed=10000, and its frozen config."
-            exit 1
-        fi
-    else
-        EXPECTED_EVAL_SEED=$((10000 + TRAINING_SEED))
-        if [ "$TRAINING_SEED" -gt 3 ] \
-            || [ "$BOOTSTRAP_EPOCHS" -ne 20000 ] \
-            || [ "$FINETUNE_EPOCHS" -ne 2000 ] \
-            || [ "$K" -ne 10 ] \
-            || [ "$EVAL_SEED" -ne "$EXPECTED_EVAL_SEED" ]; then
-            echo "Legacy universal protocol requires seeds 0..3,"
-            echo "epochs 20000+2000, K=10, and eval seed=10000+seed."
-            echo "Use ALLOW_NONFORMAL_PROTOCOL=1 only for an isolated code test."
-            exit 1
-        fi
+    if [ "$TRAINING_SEED" -ne 0 ] \
+        || [ "$BOOTSTRAP_EPOCHS" -ne 3000 ] \
+        || [ "$FINETUNE_EPOCHS" -ne 0 ] \
+        || [ "$K" -ne 10 ] \
+        || [ "$EVAL_SEED" -ne 10000 ] \
+        || [ "$TRAIN_ENV_CONFIG" != \
+            "isaacgym/src/intermimic/data/cfg/theia_reference_train.yaml" ]; then
+        echo "Single-reference rebuttal protocol requires seed=0,"
+        echo "epochs=3000+0, K=10, eval seed=10000, and its frozen config."
+        exit 1
     fi
 fi
 REFERENCE_COUNT="$(

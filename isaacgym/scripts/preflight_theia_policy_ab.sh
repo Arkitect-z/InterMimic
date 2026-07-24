@@ -79,8 +79,8 @@ if [ "$EXCLUDED_COUNT" -gt 0 ] && [ "${ACCEPT_EXCLUSIONS:-0}" != "1" ]; then
     exit 1
 fi
 
-python "$SCRIPT_DIR/check_theia_protomotions.py" \
-    --output-json "$DATA_ROOT/protomotions_version.json"
+python "$SCRIPT_DIR/check_theia_server_versions.py" \
+    --output-json "$DATA_ROOT/repository_versions.json"
 
 python "$SCRIPT_DIR/test_theia_training_protocol.py"
 python "$SCRIPT_DIR/test_theia_reference_pipeline.py"
@@ -144,7 +144,7 @@ result = {
             "policy_ab_validation.json",
             "raw_dataset_validation.json",
             "full_dataset_validation.json",
-            "protomotions_version.json",
+            "repository_versions.json",
         )
     },
 }

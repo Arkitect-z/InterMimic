@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-command server training for a completely unseen Theia dataset.
+# Historical universal-policy training for a Theia dataset.
 #
 # Default:
 #   bash isaacgym/scripts/run_theia_server.sh
@@ -10,6 +10,13 @@
 # Safe to run again after interruption: the latest full checkpoint, optimizer,
 # epoch, frame count, and reward-best state are restored automatically.
 set -euo pipefail
+
+if [ "${ALLOW_LEGACY_UNIVERSAL:-0}" != "1" ]; then
+    echo "run_theia_server.sh is a historical universal-policy workflow."
+    echo "Formal jobs must use run_theia_policy_reference_list.sh (v2/3000)."
+    echo "Set ALLOW_LEGACY_UNIVERSAL=1 only for a non-formal diagnostic."
+    exit 1
+fi
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd)"

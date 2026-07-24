@@ -19,6 +19,10 @@ from summarize_theia_eval import ValidationError, load_paired_manifest
 
 
 CONDITIONS = ("raw", "full")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SERVER_VERSION_MANIFEST = REPO_ROOT / "THEIA_POLICY_SERVER_VERSION.json"
+SERVER_RELEASE = json.loads(SERVER_VERSION_MANIFEST.read_text())
+EMPTY_GIT_DIFF_SHA256 = hashlib.sha256(b"").hexdigest()
 LABELS = {
     "raw": "Raw MoCap",
     "full": "Measured-tactile refinement",
@@ -168,7 +172,61 @@ def parse_float(value, label):
     return parsed
 
 
-def load_one_result(experiment_root, reference, condition):
+def validate_repository_receipt(experiment_root):
+    receipt_path = Path(experiment_root) / "repository_versions.json"
+    if not receipt_path.is_file():
+        raise ValidationError(
+            "Missing formal repository version receipt: {}".format(
+                receipt_path
+            )
+        )
+    receipt = json.loads(receipt_path.read_text())
+    if (
+        receipt.get("valid") is not True
+        or receipt.get("release_name") != SERVER_RELEASE["release_name"]
+        or receipt.get("formal_method_status")
+        != "only_supported_formal_policy_method"
+        or receipt.get("protocol", {}).get("id")
+        != SERVER_RELEASE["protocol"]["id"]
+    ):
+        raise ValidationError(
+            "Invalid formal repository version receipt: {}".format(
+                receipt_path
+            )
+        )
+    repositories = receipt.get("repositories", {})
+    if set(repositories) != {"Theia", "InterMimic", "ProtoMotions"}:
+        raise ValidationError(
+            "Repository receipt does not cover exactly Theia, InterMimic, "
+            "and ProtoMotions"
+        )
+    for name, report in repositories.items():
+        if report.get("valid") is not True:
+            raise ValidationError(
+                "{} is invalid in {}".format(name, receipt_path)
+            )
+    intermimic = repositories["InterMimic"]
+    expected_tag = SERVER_RELEASE["repositories"]["InterMimic"]["tag"]
+    release_commit = intermimic.get("release_tag_commit")
+    if (
+        intermimic.get("release_tag") != expected_tag
+        or not release_commit
+        or intermimic.get("head") != release_commit
+    ):
+        raise ValidationError(
+            "InterMimic release tag/commit mismatch in {}".format(
+                receipt_path
+            )
+        )
+    return receipt_path, receipt, release_commit
+
+
+def load_one_result(
+    experiment_root,
+    reference,
+    condition,
+    expected_intermimic_commit,
+):
     reference_id = reference["reference_id"]
     pair_root = Path(experiment_root) / "references" / reference_id
     pair_spec_path = pair_root / "pair_spec.txt"
@@ -190,6 +248,18 @@ def load_one_result(experiment_root, reference, condition):
             )
     if pair_spec.get("reference_id") != reference_id:
         raise ValidationError("{} reference_id mismatch".format(pair_spec_path))
+    if pair_spec.get("git_commit") != expected_intermimic_commit:
+        raise ValidationError(
+            "{} was not produced by InterMimic commit {}".format(
+                pair_spec_path, expected_intermimic_commit
+            )
+        )
+    if pair_spec.get("git_diff_sha256") != EMPTY_GIT_DIFF_SHA256:
+        raise ValidationError(
+            "{} was produced from a dirty InterMimic worktree".format(
+                pair_spec_path
+            )
+        )
 
     pair_ready = json.loads(pair_ready_path.read_text())
     if (
@@ -227,6 +297,15 @@ def load_one_result(experiment_root, reference, condition):
                     run_spec.get(key),
                 )
             )
+    if (
+        run_spec.get("git_commit") != expected_intermimic_commit
+        or run_spec.get("git_diff_sha256") != EMPTY_GIT_DIFF_SHA256
+    ):
+        raise ValidationError(
+            "{} does not match the clean formal InterMimic release".format(
+                run_root / "run_spec.txt"
+            )
+        )
 
     evaluation = run_root / "evaluation" / "final"
     validation_path = evaluation / "validation.json"
@@ -341,6 +420,11 @@ def aggregate(
     bootstrap_samples=10000,
     bootstrap_seed=20260725,
 ):
+    (
+        repository_receipt_path,
+        repository_receipt,
+        intermimic_commit,
+    ) = validate_repository_receipt(experiment_root)
     all_references = load_paired_manifest(manifest_path)
     by_id = {entry["reference_id"]: entry for entry in all_references}
     if reference_list is None:
@@ -367,7 +451,10 @@ def aggregate(
         reference_id = reference["reference_id"]
         condition_results = {
             condition: load_one_result(
-                experiment_root, reference, condition
+                experiment_root,
+                reference,
+                condition,
+                intermimic_commit,
             )
             for condition in CONDITIONS
         }
@@ -505,6 +592,12 @@ def aggregate(
         "reference_ids": selected_ids,
         "paired_manifest": str(Path(manifest_path).resolve()),
         "paired_manifest_sha256": sha256(manifest_path),
+        "repository_release": repository_receipt["release_name"],
+        "repository_versions": {
+            "path": str(repository_receipt_path.resolve()),
+            "sha256": sha256(repository_receipt_path),
+            "intermimic_commit": intermimic_commit,
+        },
         "confidence_interval": {
             "method": "paired_nonparametric_bootstrap_over_references",
             "samples": bootstrap_samples,

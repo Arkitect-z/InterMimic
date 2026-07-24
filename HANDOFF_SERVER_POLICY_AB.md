@@ -4,6 +4,11 @@
 
 ## 0. 最重要的实验契约
 
+`single_reference_raw_vs_refined_v2`（3000 epochs）是本项目唯一受支持的
+正式 policy 方法。服务器尚未产生 v1/1100 正式结果，因此不存在旧结果迁移或
+混用需求。旧的 universal-policy、20k+2k、四 seed 和 v1 脚本/文档只可用于
+历史审计，不能启动 rebuttal 实验。
+
 本次 rebuttal 不训练一个覆盖全部 S1 的通用 policy，也不做多 training-seed
 重复。实验单位是单条 reference：
 
@@ -34,7 +39,7 @@
 仓库已提供：
 
 - Raw/Refined 成对转换、hash 冻结和 CPU 校验；
-- ProtoMotions 版本硬检查；
+- Theia、InterMimic、ProtoMotions 三仓库版本硬检查；
 - 单 reference 的 Raw/Refined 配对训练与断点续训；
 - 接收 reference list 的单 GPU worker；
 - K=10 完整 cohort 评测；
@@ -51,7 +56,7 @@
 服务器 agent 可以优化 GPU 调度、失败重启和外部资源监控，但不能更改
 Raw/Refined 之间的训练预算、seed、配置或评测 K。
 
-## 2. 三个仓库/依赖版本
+## 2. 三仓库版本管理（第一道硬门）
 
 正式流程跨越：
 
@@ -61,44 +66,68 @@ Theia/thirdparty/InterMimic/
 Theia/thirdparty/ProtoMotions/
 ```
 
-父 Theia 仓库提供 converter；InterMimic 提供训练和评测；converter 使用
-ProtoMotions 的：
-
-```python
-poselib.poselib.skeleton.skeleton3d.SkeletonMotion
-```
-
-ProtoMotions 必须是：
+这两个第三方目录不是 Theia 的 Git submodule，必须分别 clone/fetch/checkout，
+不能只更新父 Theia。唯一正式版本清单是：
 
 ```text
-remote: https://github.com/NVlabs/ProtoMotions.git
-commit: 4a905b998101333a2fb91f2de8e2cab4bd0db68e
+InterMimic/THEIA_POLICY_SERVER_VERSION.json
 ```
 
-检查命令：
+它固定：
+
+```text
+Theia
+  remote: Arkitect-z/Theia
+  commit: 611e75243247c67f96e977b99345c74cbba7806c
+
+InterMimic
+  remote: Arkitect-z/InterMimic
+  tag: theia-policy-rebuttal-v2-3000
+
+ProtoMotions
+  remote: NVlabs/ProtoMotions
+  commit: 4a905b998101333a2fb91f2de8e2cab4bd0db68e
+```
+
+父 Theia 提供 converter；它依赖 ProtoMotions 的
+`poselib.poselib.skeleton.skeleton3d.SkeletonMotion`。服务器 agent 应先确认
+三个工作区没有需要保留的 tracked 修改，再执行：
+
+```bash
+git -C "$THEIA_ROOT" fetch origin
+git -C "$THEIA_ROOT" checkout --detach \
+  611e75243247c67f96e977b99345c74cbba7806c
+
+git -C "$THEIA_ROOT/thirdparty/ProtoMotions" fetch origin
+git -C "$THEIA_ROOT/thirdparty/ProtoMotions" checkout --detach \
+  4a905b998101333a2fb91f2de8e2cab4bd0db68e
+
+git -C "$INTERMIMIC_ROOT" fetch origin main --tags
+git -C "$INTERMIMIC_ROOT" checkout --detach \
+  theia-policy-rebuttal-v2-3000
+```
+
+然后由 agent 自主运行唯一总检查器：
 
 ```bash
 cd "$INTERMIMIC_ROOT"
-python isaacgym/scripts/check_theia_protomotions.py
+python isaacgym/scripts/check_theia_server_versions.py \
+  --output-json /server/manifests/theia_policy_repository_versions.json
 ```
 
-检查器会拒绝 commit 不匹配、缺少 `SkeletonMotion` 或 ProtoMotions 中存在已
-跟踪 dirty 修改。未跟踪的 SMPL-X 模型文件不改变代码版本。正式 converter
-入口和 CPU preflight 都会重复执行此检查，不能用
-`--allow-version-mismatch` 生成论文数据。
+只有输出 `valid: true` 才能继续。检查器会：
 
-开始前保存：
+- 接受 HTTPS 或 SSH clone，但 GitHub owner/repository 必须匹配；
+- 强制 Theia 与 ProtoMotions 为精确 commit；
+- 强制 InterMimic HEAD 精确等于正式 tag；
+- 拒绝三个仓库的 tracked dirty 修改；
+- 复算 converter 与 `SkeletonMotion` 源码 SHA-256；
+- 输出三个仓库的 HEAD、remote、tag commit 和协议参数。
 
-```bash
-git -C "$THEIA_ROOT" rev-parse HEAD
-git -C "$INTERMIMIC_ROOT" rev-parse HEAD
-git -C "$THEIA_ROOT/thirdparty/ProtoMotions" rev-parse HEAD
-git -C "$THEIA_ROOT" status --short
-git -C "$INTERMIMIC_ROOT" status --short
-```
-
-Theia 与 InterMimic 正式运行时都应 clean。不能在部分 reference 完成后只更新
-后续 worker 的代码。
+未跟踪的 SMPL-X 模型文件允许存在，因为它们不改变代码版本。GPU 调度脚本、
+reference lists 和实验输出应写在仓库外，避免污染 tracked 工作区。converter、
+CPU preflight、单 reference 入口和 list worker 都会再次自动运行同一版本硬门；
+不能只靠人工记录绕过。
 
 ## 3. 路径
 
@@ -182,7 +211,7 @@ conda run --no-capture-output -n "$CONDA_ENV" \
 正式转换会：
 
 - 显式生成 Raw 和 Refined，不允许 fallback；
-- 固定 ProtoMotions revision 并写入 manifest；
+- 复核三仓库正式版本并把完整回执写入 manifest；
 - 使用 Raw/Refined 两者所需值中较大的共同 ground shift；
 - 强制 frame indices、object trajectory 和 contact schedule 成对一致；
 - 强制 tensor 的 object/contact 列 `318:386` 逐位相同；
@@ -212,7 +241,7 @@ PRECHECK_READY.json
 policy_ab_validation.json
 raw_dataset_validation.json
 full_dataset_validation.json
-protomotions_version.json
+repository_versions.json
 ```
 
 该门还会确认 Raw/Refined 的人体参考确实不同、object/contact supervision
@@ -342,10 +371,15 @@ TORCH_DETERMINISTIC=0
 ```text
 EXPERIMENT_ROOT/references/<reference_id>/
 EXPERIMENT_ROOT/shards/
+EXPERIMENT_ROOT/repository_versions.json
 ```
 
 汇入一个中央 `EXPERIMENT_ROOT`。reference lists 不重叠，因此不应出现同名
 reference；若出现冲突，先比较 `pair_spec.txt` 和 hash，不能静默覆盖。
+所有集群的 `repository_versions.json` 必须指向同一 release/tag commit；绝对
+路径以及 HTTPS/SSH remote 表示可以不同。中央目录保留任一份 `valid: true`
+的正式回执，聚合器会再用每条结果的 `pair_spec.txt`/`run_spec.txt` 交叉校验
+InterMimic commit 和 clean diff hash。
 
 每条完成的 reference 都必须有：
 
@@ -370,6 +404,8 @@ python isaacgym/scripts/aggregate_theia_policy_references.py \
 默认要求 manifest 中每条 eligible reference 的 Raw/Refined 正式结果都存在；
 缺一条即失败。若只想检查某个集群的中间进度，可加该集群的
 `--reference-list`，但中间结果不能作为全 S1 论文表。
+聚合器还会拒绝缺失/不一致的三仓库版本回执、非正式 tag、dirty worktree
+生成的 `pair_spec.txt` 或 `run_spec.txt`。
 
 产物：
 

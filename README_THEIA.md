@@ -85,6 +85,8 @@ per condition from random policy weights. A GPU worker consumes a server-side
 reference list:
 
 ```bash
+python isaacgym/scripts/check_theia_server_versions.py
+
 CUDA_VISIBLE_DEVICES=0 \
 NUM_ENVS=2048 \
 MINIBATCH_SIZE=16384 \
@@ -103,10 +105,13 @@ training-time diagnostics are disabled. New objects use an approximate
 default density of 1000 kg/m³, so exact density entries are optional.
 
 See [HANDOFF_SERVER_POLICY_AB.md](HANDOFF_SERVER_POLICY_AB.md) for frozen data
-preparation, the pinned ProtoMotions revision, list sharding, smoke tests and
-the final paired result aggregator. `run_theia_server.sh` and the 20k+2k
-full-dataset policy are retained only as a legacy universal-policy workflow;
-they are not the rebuttal A/B protocol.
+preparation, the pinned Theia/InterMimic/ProtoMotions release, list sharding,
+smoke tests and the final paired result aggregator. The exact repository
+contract is machine-readable in
+[`THEIA_POLICY_SERVER_VERSION.json`](THEIA_POLICY_SERVER_VERSION.json).
+`single_reference_raw_vs_refined_v2` at 3000 epochs is the only supported
+formal method. `run_theia_server.sh`, v1/1100, and the 20k+2k full-dataset
+workflow are historical tools and must not be used for rebuttal results.
 
 Do not promote a candidate by PPO reward alone. Report completion and final
 object pose per sequence. Actor-pair contact metrics are separate diagnostics;
@@ -188,10 +193,12 @@ hand-object pairing, neutral non-hand labels, no object-reward floor, no GT
 contact hard termination, and no GPU wrong-contact penalty. Soft contact
 remains experimental rather than the production default.
 
-### Full-dataset Expansion
+### Historical Universal-policy Workflow (Not for Rebuttal)
 
-The repository currently contains only one 339-frame `.pt` sequence. To start
-actual all-dataset training:
+The following older workflow trains one universal policy over a directory.
+It is retained only for engineering history and must not be used for the
+formal Raw-vs-Refined results. The server agent should follow the list-sharded
+v2/3000 handoff above.
 
 1. Convert all sequences into `theia_data/`; keep the `sub<number>_<left>+<right>_<sequence>.pt` naming convention.
 2. Ensure every object mesh and URDF exists. Exact density is optional; unknown
@@ -208,9 +215,9 @@ actual all-dataset training:
      --num-envs "$NUM_ENVS"
    ```
 
-5. Run `run_theia_server.sh`. It performs both stages, resumes safely after
-   interruption, and saves `data_manifest.json`, logs, checkpoints, and final
-   CSV/JSON evaluation.
+5. For a non-formal diagnostic only, run `run_theia_server.sh`. It performs
+   both stages, resumes safely after interruption, and saves
+   `data_manifest.json`, logs, checkpoints, and final CSV/JSON evaluation.
 6. Evaluate per sequence and promote only when lower-tail per-sequence
    completion and object-pose criteria pass; an aggregate mean must not hide a
    failed sequence.
@@ -251,8 +258,10 @@ penalized. Strict PhysX actor-pair contacts remain evaluation-only diagnostics.
 isaacgym/
   scripts/
     train_all.sh          # Legacy single-sequence launcher
-    run_theia_server.sh   # One-command server train/resume/evaluate
-    train_theia_full.sh   # Server bootstrap/fine-tune/resume
+    run_theia_policy_reference_list.sh # Formal v2/3000 GPU worker
+    check_theia_server_versions.py # Formal three-repository gate
+    run_theia_server.sh   # Blocked-by-default legacy universal workflow
+    train_theia_full.sh   # Internal training/resume stage
     train_theia_10h.sh    # Legacy-named local validation helper
     eval_theia.sh         # Fixed-seed semantic evaluation
     test_theia.sh         # Visualization

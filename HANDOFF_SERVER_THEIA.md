@@ -4,7 +4,9 @@
 > handoff。论文的 paired S1 Raw-vs-Full 实验禁止使用
 > `run_theia_server.sh`，因为它不是逐 reference、Raw/Refined 各训练一次的
 > list-sharded \(K=10\) 协议。正式论文实验请只遵循
-> `HANDOFF_SERVER_POLICY_AB.md`。
+> `HANDOFF_SERVER_POLICY_AB.md` 中唯一受支持的 v2/3000 方法；本文其余命令
+> 均不具有正式实验资格。为防止误启动，`run_theia_server.sh` 默认拒绝运行；
+> 只有非正式历史诊断才可显式设置 `ALLOW_LEGACY_UNIVERSAL=1`。
 
 更新时间：2026-07-24（Asia/Shanghai）
 
@@ -18,7 +20,7 @@ Theia 序列的检查、训练、断点恢复、评测和结果汇报。
 2. 生产方案是“原始 InterMimic 训练目标 + 已确认的 correctness bug 修复”。
    不把本机未完成从零验证的 soft-contact、terminal pose bonus 或精确
    actor-pair contact 训练加入服务器默认方案。
-3. 正式入口只有一个：
+3. 此历史方案的入口如下（不得用于正式 Raw-vs-Refined 实验）：
 
    ```bash
    THEIA_DATA_DIR=/absolute/path/to/server/theia_pt \
