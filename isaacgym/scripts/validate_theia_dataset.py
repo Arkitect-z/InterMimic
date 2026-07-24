@@ -65,6 +65,15 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def path_for_manifest(path):
+    """Prefer repository-relative paths, while supporting external datasets."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def foot_collision_min_z(data):
     """Compute minimum world-space foot-box corner height from PT body poses."""
     body_elements = {
@@ -258,7 +267,7 @@ def main():
             )
 
         sequences.append({
-            "path": str(path.relative_to(REPO_ROOT)),
+            "path": path_for_manifest(path),
             "frames": int(data.shape[0]),
             "objects": [obj1, obj2],
             "left_contact_frames": int(left_contact.sum()),

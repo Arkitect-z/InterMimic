@@ -50,9 +50,11 @@ STAGE="${1:-bootstrap}"
 CHECKPOINT_MODE="${CHECKPOINT_MODE:-fresh}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-20000}"
 NUM_ENVS="${NUM_ENVS:-2048}"
+MINIBATCH_SIZE="${MINIBATCH_SIZE:-}"
 SEED="${SEED:-42}"
 MOTION_FILE="${MOTION_FILE:-}"
-MIN_TRAIN_ENVS=512
+HORIZON_LENGTH=32
+SEQ_LEN=4
 
 case "$STAGE" in
     bootstrap)
@@ -90,14 +92,59 @@ case "$CHECKPOINT_MODE" in
         ;;
 esac
 
-if [ "$NUM_ENVS" -lt "$MIN_TRAIN_ENVS" ]; then
-    echo "NUM_ENVS must be >= ${MIN_TRAIN_ENVS}: horizon=32, minibatch=16384"
+if ! [[ "$NUM_ENVS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "NUM_ENVS must be a positive integer, got '$NUM_ENVS'"
+    exit 1
+fi
+if [ -z "$MINIBATCH_SIZE" ]; then
+    # Keep four PPO minibatches for any exactly balanced environment count.
+    MINIBATCH_SIZE=$((NUM_ENVS * HORIZON_LENGTH / 4))
+fi
+if ! [[ "$MINIBATCH_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MINIBATCH_SIZE must be a positive integer, got '$MINIBATCH_SIZE'"
+    exit 1
+fi
+TOTAL_BATCH_SIZE=$((NUM_ENVS * HORIZON_LENGTH))
+if [ $((TOTAL_BATCH_SIZE % MINIBATCH_SIZE)) -ne 0 ]; then
+    echo "NUM_ENVS * horizon_length must be divisible by MINIBATCH_SIZE:"
+    echo "$NUM_ENVS * $HORIZON_LENGTH = $TOTAL_BATCH_SIZE,"
+    echo "MINIBATCH_SIZE=$MINIBATCH_SIZE."
+    exit 1
+fi
+if [ $((MINIBATCH_SIZE % SEQ_LEN)) -ne 0 ]; then
+    echo "MINIBATCH_SIZE must be divisible by seq_len=$SEQ_LEN"
+    exit 1
+fi
+
+MOTION_DIR="${MOTION_FILE:-theia_data}"
+if [ ! -d "$MOTION_DIR" ]; then
+    echo "Motion directory not found: $MOTION_DIR"
+    exit 1
+fi
+SEQUENCE_COUNT="$(
+    python - "$MOTION_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+print(sum(path.is_file() for path in Path(sys.argv[1]).glob("*.pt")))
+PY
+)"
+if [ "$SEQUENCE_COUNT" -lt 1 ]; then
+    echo "No .pt motion sequences found in $MOTION_DIR"
+    exit 1
+fi
+if [ "$NUM_ENVS" -lt "$SEQUENCE_COUNT" ]; then
+    echo "NUM_ENVS=$NUM_ENVS cannot cover $SEQUENCE_COUNT motion sequences"
     exit 1
 fi
 
 RUN_ID="theia_full_${STAGE}_$(date +%Y%m%d_%H%M%S)"
 OUTPUT_PATH="${OUTPUT_PATH:-checkpoints/${RUN_ID}}"
 mkdir -p "$OUTPUT_PATH"
+INVOCATION_ID="$(date +%Y%m%d_%H%M%S)_$$"
+INVOCATION_DIR="$OUTPUT_PATH/invocations"
+INVOCATION_MANIFEST="$INVOCATION_DIR/run_manifest_${INVOCATION_ID}.txt"
+mkdir -p "$INVOCATION_DIR"
 
 VALIDATOR_ARGS=(
     --config "$CFG_ENV"
@@ -111,9 +158,11 @@ python isaacgym/scripts/validate_theia_dataset.py "${VALIDATOR_ARGS[@]}"
 
 {
     echo "timestamp=$(date --iso-8601=seconds)"
+    echo "invocation_id=$INVOCATION_ID"
     echo "stage=$STAGE"
     echo "checkpoint_mode=$CHECKPOINT_MODE"
     echo "num_envs=$NUM_ENVS"
+    echo "minibatch_size=$MINIBATCH_SIZE"
     echo "max_iterations=$MAX_ITERATIONS"
     echo "seed=$SEED"
     echo "motion_file=${MOTION_FILE:-theia_data}"
@@ -126,7 +175,7 @@ python isaacgym/scripts/validate_theia_dataset.py "${VALIDATOR_ARGS[@]}"
     if [ "$CHECKPOINT_MODE" = "resume" ]; then
         sha256sum "$CHECKPOINT"
     fi
-} > "$OUTPUT_PATH/run_manifest.txt"
+} | tee "$INVOCATION_MANIFEST" >> "$OUTPUT_PATH/run_manifest.txt"
 
 ARGS=(
     --task InterMimic
@@ -136,6 +185,7 @@ ARGS=(
     --torch_deterministic
     --seed "$SEED"
     --num_envs "$NUM_ENVS"
+    --minibatch_size "$MINIBATCH_SIZE"
     --max_iterations "$MAX_ITERATIONS"
     --output_path "$OUTPUT_PATH"
 )
@@ -146,6 +196,12 @@ if [ -n "$MOTION_FILE" ]; then
     ARGS+=(--motion_file "$MOTION_FILE")
 fi
 
-echo "stage=$STAGE mode=$CHECKPOINT_MODE output=$OUTPUT_PATH"
-echo "envs=$NUM_ENVS iterations=$MAX_ITERATIONS seed=$SEED"
-python -m intermimic.run "${ARGS[@]}" 2>&1 | tee "$OUTPUT_PATH/train.log"
+{
+    echo
+    echo "================================================================"
+    echo "invocation=$INVOCATION_ID"
+    echo "stage=$STAGE mode=$CHECKPOINT_MODE output=$OUTPUT_PATH"
+    echo "envs=$NUM_ENVS minibatch=$MINIBATCH_SIZE iterations=$MAX_ITERATIONS seed=$SEED"
+    echo "================================================================"
+} | tee -a "$OUTPUT_PATH/train.log"
+python -m intermimic.run "${ARGS[@]}" 2>&1 | tee -a "$OUTPUT_PATH/train.log"

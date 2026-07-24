@@ -68,6 +68,12 @@ class InterMimicAgent(common_agent.CommonAgent):
         if self._normalize_input:
             self._input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
         self.resume_from = config['resume_from']
+        raw_milestones = config.get('checkpoint_milestones', [])
+        self.checkpoint_milestones = {
+            int(epoch) for epoch in raw_milestones
+        }
+        if any(epoch <= 0 for epoch in self.checkpoint_milestones):
+            raise ValueError("checkpoint_milestones must contain positive epochs")
         self.done_indices = []
         self.epoch_num_start = 0
         return
@@ -280,6 +286,15 @@ class InterMimicAgent(common_agent.CommonAgent):
                     if self._save_intermediate:
                         int_model_output_file = model_output_file + '_' + str(epoch_num).zfill(8)
                         self.save(int_model_output_file)
+
+                if epoch_num in self.checkpoint_milestones:
+                    milestone_output_file = (
+                        model_output_file
+                        + '_epoch_'
+                        + str(epoch_num).zfill(8)
+                    )
+                    print(f"Saving fixed milestone checkpoint: epoch={epoch_num}")
+                    self.save(milestone_output_file)
 
                 # max_epochs is a run budget.  On resume, rl_games restores the
                 # absolute checkpoint epoch (e.g. 1100), so comparing the

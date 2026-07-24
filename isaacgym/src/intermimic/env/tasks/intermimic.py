@@ -818,6 +818,24 @@ class InterMimic(Humanoid_SMPLX):
             self._eval_result_final_object_rot_error_deg = torch.full(
                 (self.num_envs, 2), float('nan'), device=self.device
             )
+            self._eval_result_human_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
+            self._eval_result_object_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
+            self._eval_result_ig_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
+            self._eval_result_wrist_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
+            self._eval_result_object_phase_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
+            self._eval_result_contact_phase_termination = torch.zeros_like(
+                self._eval_result_completed
+            )
 
         if not hasattr(self, 'data_component_order'):
             self.create_component_stat(loaded_dict)
@@ -1739,6 +1757,27 @@ class InterMimic(Humanoid_SMPLX):
                 self._eval_result_final_object_rot_error_deg[reset_id] = (
                     self._eval_final_object_rot_error_deg[reset_id]
                 )
+                self._eval_result_human_termination[reset_id] = (
+                    self._human_fail_reset[reset_id]
+                )
+                self._eval_result_object_termination[reset_id] = (
+                    self._object_fail_reset[reset_id]
+                )
+                self._eval_result_ig_termination[reset_id] = (
+                    self._ig_fail_reset[reset_id]
+                )
+                self._eval_result_wrist_termination[reset_id] = (
+                    self._wrist_fail_reset[reset_id]
+                    & self._enable_wrist_failure_termination
+                )
+                self._eval_result_object_phase_termination[reset_id] = (
+                    self._object_phase_fail_reset[reset_id]
+                    & self._enable_object_contact_phase_termination
+                )
+                self._eval_result_contact_phase_termination[reset_id] = (
+                    self._contact_phase_fail_reset[reset_id]
+                    & self._enable_contact_failure_termination
+                )
                 self._eval_active_env[reset_id] = False
 
         if self.reset_buf.sum() > 0 and self.psi > 1:
@@ -1878,6 +1917,7 @@ class InterMimic(Humanoid_SMPLX):
             (self._hand_fail_counter > 20)
             & (self.progress_buf > self.start_times + 10)
         )
+        self._wrist_fail_reset = wrist_fail_reset
         self._hand_fail_reset = (
             wrist_fail_reset
             if self._enable_wrist_failure_termination
@@ -1902,6 +1942,7 @@ class InterMimic(Humanoid_SMPLX):
         )
         self._obj_fail_counter = (self._obj_fail_counter + obj_fail) * obj_fail
         obj_fail_reset = (self._obj_fail_counter > 20) & (self.progress_buf > self.start_times + 10)
+        self._object_phase_fail_reset = obj_fail_reset
         if self._enable_object_contact_phase_termination:
             self._hand_fail_reset = self._hand_fail_reset | obj_fail_reset
 
@@ -1956,6 +1997,7 @@ class InterMimic(Humanoid_SMPLX):
             ).any(dim=-1)
             & (self.progress_buf > self.start_times + 10)
         )
+        self._contact_phase_fail_reset = contact_fail_reset
         if self._enable_contact_failure_termination:
             self._hand_fail_reset = self._hand_fail_reset | contact_fail_reset
 
@@ -1981,6 +2023,9 @@ class InterMimic(Humanoid_SMPLX):
                         - wrong_contact_weight * wrong_contact
 
         kinematic_reset = torch.logical_or(human_reset, object_reset)
+        self._human_fail_reset = human_reset.bool()
+        self._object_fail_reset = object_reset.bool()
+        self._ig_fail_reset = ig_reset.bool()
         self.contact_reset = self._contact_fail_counter
         self.kinematic_reset = torch.logical_or(ig_reset, kinematic_reset)
         if self.psi > 1:
@@ -2674,14 +2719,50 @@ class InterMimic(Humanoid_SMPLX):
         result_final_rot = (
             self._eval_result_final_object_rot_error_deg.detach().cpu().numpy()
         )
+        termination_results = {
+            'human_tracking': (
+                self._eval_result_human_termination.detach().cpu().numpy()
+            ),
+            'object_tracking': (
+                self._eval_result_object_termination.detach().cpu().numpy()
+            ),
+            'interaction_geometry': (
+                self._eval_result_ig_termination.detach().cpu().numpy()
+            ),
+            'wrist_tracking': (
+                self._eval_result_wrist_termination.detach().cpu().numpy()
+            ),
+            'object_contact_phase': (
+                self._eval_result_object_phase_termination.detach().cpu().numpy()
+            ),
+            'required_contact_phase': (
+                self._eval_result_contact_phase_termination.detach().cpu().numpy()
+            ),
+        }
 
         episode_rows = []
+        eval_condition = os.environ.get('THEIA_EVAL_CONDITION', '')
+        eval_training_seed = os.environ.get('THEIA_TRAINING_SEED', '')
+        eval_seed = os.environ.get('THEIA_EVAL_SEED', '')
+        eval_run_id = os.environ.get('THEIA_EVAL_RUN_ID', '')
         for env_id in recorded_envs.tolist():
             seq_id = int(result_sequence[env_id])
             episode_rows.append({
+                'run_id': eval_run_id,
+                'condition': eval_condition,
+                'training_seed': eval_training_seed,
+                'eval_seed': eval_seed,
                 'env_id': env_id,
+                # Environment i is deterministically bound to motion i % N.
+                # Keeping this explicit lets the paper pipeline prove that
+                # every reference received exactly K independent replicas.
+                'trial_id': env_id // self.num_motions,
                 'sequence_id': seq_id,
                 'sequence': os.path.basename(self.motion_file[seq_id]),
+                'reference_frames': int(
+                    self.max_episode_length[seq_id].item()
+                ),
+                'fps': self.fps_data,
                 'steps': int(result_steps[env_id]),
                 'completed': int(result_completed[env_id]),
                 'reached_both': int(result_reached[env_id]),
@@ -2698,6 +2779,10 @@ class InterMimic(Humanoid_SMPLX):
                 'final_obj2_position_error_m': float(result_final_pos[env_id, 1]),
                 'final_obj1_rotation_error_deg': float(result_final_rot[env_id, 0]),
                 'final_obj2_rotation_error_deg': float(result_final_rot[env_id, 1]),
+                **{
+                    f'terminated_{name}': int(values[env_id])
+                    for name, values in termination_results.items()
+                },
             })
 
         def metric_summary(values):
@@ -2713,6 +2798,7 @@ class InterMimic(Humanoid_SMPLX):
         human_errors = result_human_error[recorded]
         object_errors = result_object_error[recorded]
         sequence_summaries = []
+        termination_rows = []
         for seq_id, path in enumerate(self.motion_file):
             sequence_mask = recorded & (result_sequence == seq_id)
             sequence_episodes = int(sequence_mask.sum())
@@ -2734,9 +2820,31 @@ class InterMimic(Humanoid_SMPLX):
                 ),
                 'wrong_contact_steps': int(result_wrong_steps[sequence_mask].sum()),
             })
+            termination_rows.append({
+                'sequence_id': seq_id,
+                'sequence': os.path.basename(path),
+                'episodes': sequence_episodes,
+                'completed': int(result_completed[sequence_mask].sum()),
+                **{
+                    name: int(values[sequence_mask].sum())
+                    for name, values in termination_results.items()
+                },
+            })
 
         summary = {
-            'schema_version': 1,
+            'schema_version': 2,
+            'run': {
+                'run_id': eval_run_id,
+                'condition': eval_condition,
+                'training_seed': eval_training_seed,
+                'eval_seed': eval_seed,
+                'fps': self.fps_data,
+                'num_references': self.num_motions,
+                'trials_per_reference': (
+                    expected_episodes // self.num_motions
+                    if expected_episodes % self.num_motions == 0 else None
+                ),
+            },
             'expected_episodes': expected_episodes,
             'actual_episodes': actual_episodes,
             'complete_cohort': actual_episodes == expected_episodes,
@@ -2774,6 +2882,9 @@ class InterMimic(Humanoid_SMPLX):
             os.makedirs(output_dir, exist_ok=True)
             csv_path = os.path.join(output_dir, 'episodes.csv')
             json_path = os.path.join(output_dir, 'summary.json')
+            termination_path = os.path.join(
+                output_dir, 'termination_causes.csv'
+            )
             if episode_rows:
                 with open(csv_path, 'w', newline='') as csv_file:
                     writer = csv.DictWriter(
@@ -2781,10 +2892,20 @@ class InterMimic(Humanoid_SMPLX):
                     )
                     writer.writeheader()
                     writer.writerows(episode_rows)
+            if termination_rows:
+                with open(termination_path, 'w', newline='') as csv_file:
+                    writer = csv.DictWriter(
+                        csv_file, fieldnames=list(termination_rows[0].keys())
+                    )
+                    writer.writeheader()
+                    writer.writerows(termination_rows)
             with open(json_path, 'w') as json_file:
                 json.dump(summary, json_file, indent=2, sort_keys=True)
                 json_file.write('\n')
-            print(f"  Machine-readable results: {json_path}, {csv_path}")
+            print(
+                "  Machine-readable results: "
+                f"{json_path}, {csv_path}, {termination_path}"
+            )
 
         metrics = summary['metrics']
         errors = summary['errors']
