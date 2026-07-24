@@ -61,7 +61,7 @@ params:
     save_best_after: 50
     # One rolling checkpoint every 500 epochs plus the final checkpoint keeps
     # interruption recovery while halving network-filesystem traffic for the
-    # 1100-epoch per-reference rebuttal jobs.
+    # 3000-epoch per-reference rebuttal jobs.
     save_frequency: 500
     print_stats: True
     # Resource telemetry is sampled without blocking and only periodically.

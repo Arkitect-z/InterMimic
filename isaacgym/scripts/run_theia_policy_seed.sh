@@ -133,14 +133,14 @@ esac
 if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ]; then
     if [ "$PROTOCOL_MODE" = "single_reference_rebuttal" ]; then
         if [ "$TRAINING_SEED" -ne 0 ] \
-            || [ "$BOOTSTRAP_EPOCHS" -ne 1100 ] \
+            || [ "$BOOTSTRAP_EPOCHS" -ne 3000 ] \
             || [ "$FINETUNE_EPOCHS" -ne 0 ] \
             || [ "$K" -ne 10 ] \
             || [ "$EVAL_SEED" -ne 10000 ] \
             || [ "$TRAIN_ENV_CONFIG" != \
                 "isaacgym/src/intermimic/data/cfg/theia_reference_train.yaml" ]; then
             echo "Single-reference rebuttal protocol requires seed=0,"
-            echo "epochs=1100+0, K=10, eval seed=10000, and its frozen config."
+            echo "epochs=3000+0, K=10, eval seed=10000, and its frozen config."
             exit 1
         fi
     else

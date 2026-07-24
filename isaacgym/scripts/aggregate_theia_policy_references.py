@@ -24,8 +24,8 @@ LABELS = {
     "full": "Measured-tactile refinement",
 }
 FORMAL_PROTOCOL = {
-    "protocol": "single_reference_raw_vs_refined_v1",
-    "train_epochs": "1100",
+    "protocol": "single_reference_raw_vs_refined_v2",
+    "train_epochs": "3000",
     "training_seed": "0",
     "evaluation_seed": "10000",
     "k_trials": "10",
@@ -209,7 +209,7 @@ def load_one_result(experiment_root, reference, condition):
         "condition": condition,
         "training_seed": "0",
         "reference_count": "1",
-        "bootstrap_epochs": "1100",
+        "bootstrap_epochs": "3000",
         "finetune_epochs": "0",
         "train_env_config": FORMAL_PROTOCOL["train_env_config"],
         "eval_k": "10",

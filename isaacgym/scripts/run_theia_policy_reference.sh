@@ -30,7 +30,7 @@ if [ -z "$EXPERIMENT_ROOT_INPUT" ]; then
     exit 1
 fi
 
-TRAIN_EPOCHS="${TRAIN_EPOCHS:-1100}"
+TRAIN_EPOCHS="${TRAIN_EPOCHS:-3000}"
 TRAINING_SEED="${TRAINING_SEED:-0}"
 EVAL_SEED="${EVAL_SEED:-10000}"
 K="${K:-10}"
@@ -56,12 +56,12 @@ if ! [[ "$TRAINING_SEED" =~ ^[0-9]+$ ]] \
     exit 1
 fi
 if [ "$ALLOW_PROTOCOL_OVERRIDE" = "0" ] && {
-    [ "$TRAIN_EPOCHS" -ne 1100 ] \
+    [ "$TRAIN_EPOCHS" -ne 3000 ] \
     || [ "$TRAINING_SEED" -ne 0 ] \
     || [ "$EVAL_SEED" -ne 10000 ] \
     || [ "$K" -ne 10 ];
 }; then
-    echo "Rebuttal protocol is fixed at 1100 epochs, one seed=0, eval seed=10000, K=10."
+    echo "Rebuttal protocol is fixed at 3000 epochs, one seed=0, eval seed=10000, K=10."
     echo "ALLOW_PROTOCOL_OVERRIDE=1 is only for isolated smoke/pilot directories."
     exit 1
 fi
@@ -88,7 +88,7 @@ python "$SCRIPT_DIR/prepare_theia_reference_view.py" \
 PAIR_SPEC_TMP="$(mktemp "$PAIR_ROOT/.pair_spec.XXXXXX")"
 trap 'rm -f "$PAIR_SPEC_TMP"' EXIT
 {
-    echo "protocol=single_reference_raw_vs_refined_v1"
+    echo "protocol=single_reference_raw_vs_refined_v2"
     echo "reference_id=$REFERENCE_ID"
     echo "train_epochs=$TRAIN_EPOCHS"
     echo "training_seed=$TRAINING_SEED"
@@ -171,7 +171,7 @@ for condition in ("raw", "full"):
     }
 receipt = {
     "schema_version": 1,
-    "protocol": "single_reference_raw_vs_refined_v1",
+    "protocol": "single_reference_raw_vs_refined_v2",
     "reference_id": reference_id,
     "training_runs_per_condition": 1,
     "training_seed": seed,

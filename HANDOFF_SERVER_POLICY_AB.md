@@ -17,7 +17,7 @@
 
 - 每个 `reference × condition` 只训练一次；
 - training seed 固定为 `0`，它只是固定随机初始化，不表示重复训练；
-- 单阶段 Hybrid/RSI 训练 1100 epochs；
+- 单阶段 Hybrid/RSI 训练 3000 epochs；
 - Raw/Refined 使用相同 seed、PPO、环境数、物理参数、物体轨迹和接触标签；
 - 每条 policy 用 `K=10` 个并行 rollout 评测；这是一次并行评测，不是训练十次；
 - 主指标为 InterMimic 风格的 RefSucc@10、Duration、\(E_h\)、\(E_o\)；
@@ -258,7 +258,7 @@ MINIBATCH_SIZE % 4 == 0
 保留约 1.5--2 GiB，不以 `nvidia-smi` 必须占满 24 GiB 为目标。正式 Raw 与
 Refined、所有 GPU/集群使用同一个最终环境数。
 
-快速 smoke 的 `pair_spec` 与正式 1100-epoch 协议不同，聚合器会拒绝它进入
+快速 smoke 的 `pair_spec` 与正式 3000-epoch 协议不同，聚合器会拒绝它进入
 论文结果。
 
 ## 8. 按集群/GPU 切分 reference lists
@@ -324,7 +324,7 @@ K
 脚本默认并硬检查：
 
 ```text
-TRAIN_EPOCHS=1100
+TRAIN_EPOCHS=3000
 TRAINING_SEED=0
 EVAL_SEED=10000
 K=10
@@ -399,7 +399,8 @@ policy 稳定性，但不替代 InterMimic 的 reference coverage。
 3bc54a5 Add dual-object SMPLX interaction policy with residual control
 ```
 
-其保存 checkpoint 位于 epoch 1100。当前逐 reference 配方继续使用其核心：
+其保存 checkpoint 位于 epoch 1100。当前逐 reference 配方继续使用其核心，
+并把正式预算提高到 3000 epochs，为更困难的未见序列保留额外收敛空间：
 
 本机复算还确认，早期成功训练所用的
 `theia_data/sub1_CupBlue+KettleGreen_S1L33P01T0508V01.pt`
@@ -408,8 +409,10 @@ SHA-256 为
 与当前 paired converter 生成的 Refined 文件逐字节相同；对应 checkpoint
 epoch 为 1100，SHA-256 为
 `31df8385c8473f27147ebd89d1be6d9facaea4da768ee55f7cc51cfe2449fa8a`。
-因此 1100 是 Refined 单序列已有成功证据的预算，不是任意缩短；Raw 是否能在
-同一预算学会正是本次 comparison 的测量对象。
+因此 1100 是 Refined 单序列已有成功证据的下限，不是任意选择。正式实验统一
+提高到 3000，而不是按序列难度动态加时；Raw 是否能在相同 3000-epoch 预算内
+学会正是本次 comparison 的测量对象。更长预算也可能让部分 Raw policy 追上，
+因此它提高困难序列的绝对成功率，但不保证扩大 Raw/Refined 差值。
 
 | 项目 | 早期成功配方 | 当前正式逐 reference 配方 |
 |---|---|---|
@@ -417,7 +420,7 @@ epoch 为 1100，SHA-256 为
 | PPO LR / clip | `2e-5 / 0.2` | 不变 |
 | horizon / mini epochs | `32 / 6` | 不变 |
 | 初始化 | Hybrid, rollout 100 | 不变 |
-| 训练预算 | 成功 checkpoint epoch 1100 | 固定 1100 |
+| 训练预算 | 成功 checkpoint epoch 1100 | 固定 3000 |
 | contact reward | legacy multiplicative | 保留 |
 | wrist/object phase reset | 已硬编码使用 | 保留并配置化 |
 
@@ -466,7 +469,7 @@ Refined 一定显著更高；若结果不显著，不能通过修改 Raw 专属�
 - 标准 `train.log` 和 TensorBoard scalar；
 - 每 50 epochs 一次非阻塞资源 telemetry；
 - 每 500 epochs 覆盖写一个 rolling checkpoint；
-- epoch 1100 final checkpoint；
+- epoch 3000 final checkpoint；
 - 一次 K=10 评测的 CSV/JSON/hash。
 
 这些保留项用于断点恢复和 rebuttal 证据链，开销远小于 PhysX/RL rollout。

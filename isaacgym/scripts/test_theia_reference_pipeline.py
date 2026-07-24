@@ -128,7 +128,7 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         source = (
             SCRIPT_DIR / "run_theia_policy_reference.sh"
         ).read_text()
-        self.assertIn('TRAIN_EPOCHS="${TRAIN_EPOCHS:-1100}"', source)
+        self.assertIn('TRAIN_EPOCHS="${TRAIN_EPOCHS:-3000}"', source)
         self.assertIn('TRAINING_SEED="${TRAINING_SEED:-0}"', source)
         self.assertIn("FINETUNE_EPOCHS=0", source)
         self.assertIn("PROTOCOL_MODE=single_reference_rebuttal", source)
@@ -197,9 +197,9 @@ class ReferenceAggregationTest(unittest.TestCase):
         pair.mkdir(parents=True, exist_ok=True)
         (pair / "pair_spec.txt").write_text(
             "\n".join([
-                "protocol=single_reference_raw_vs_refined_v1",
+                "protocol=single_reference_raw_vs_refined_v2",
                 "reference_id={}".format(reference_id),
-                "train_epochs=1100",
+                "train_epochs=3000",
                 "training_seed=0",
                 "evaluation_seed=10000",
                 "k_trials=10",
@@ -212,7 +212,7 @@ class ReferenceAggregationTest(unittest.TestCase):
             ])
         )
         (pair / "PAIR_READY.json").write_text(json.dumps({
-            "protocol": "single_reference_raw_vs_refined_v1",
+            "protocol": "single_reference_raw_vs_refined_v2",
             "reference_id": reference_id,
             "training_runs_per_condition": 1,
             "training_seed": 0,
@@ -225,7 +225,7 @@ class ReferenceAggregationTest(unittest.TestCase):
                 "condition={}".format(condition),
                 "training_seed=0",
                 "reference_count=1",
-                "bootstrap_epochs=1100",
+                "bootstrap_epochs=3000",
                 "finetune_epochs=0",
                 (
                     "train_env_config=isaacgym/src/intermimic/data/cfg/"

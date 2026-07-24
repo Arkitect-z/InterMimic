@@ -95,7 +95,7 @@ bash isaacgym/scripts/run_theia_policy_reference_list.sh \
 ```
 
 For every listed reference, the worker trains one Raw and one
-measured-tactile-refined policy for 1100 Hybrid/RSI epochs using the same
+measured-tactile-refined policy for 3000 Hybrid/RSI epochs using the same
 fixed seed, then performs K=10 parallel evaluation rollouts. The seed fixes
 the initialization; it is not a request for repeated training. Different
 cluster/GPU workers receive disjoint reference lists. Runs are resumable and
