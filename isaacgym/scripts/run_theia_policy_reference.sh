@@ -30,7 +30,7 @@ if [ -z "$EXPERIMENT_ROOT_INPUT" ]; then
     exit 1
 fi
 
-TRAIN_EPOCHS="${TRAIN_EPOCHS:-3000}"
+TRAIN_EPOCHS="${TRAIN_EPOCHS:-2000}"
 TRAINING_SEED="${TRAINING_SEED:-0}"
 EVAL_SEED="${EVAL_SEED:-10000}"
 K="${K:-10}"
@@ -56,12 +56,12 @@ if ! [[ "$TRAINING_SEED" =~ ^[0-9]+$ ]] \
     exit 1
 fi
 if [ "$ALLOW_PROTOCOL_OVERRIDE" = "0" ] && {
-    [ "$TRAIN_EPOCHS" -ne 3000 ] \
+    [ "$TRAIN_EPOCHS" -ne 2000 ] \
     || [ "$TRAINING_SEED" -ne 0 ] \
     || [ "$EVAL_SEED" -ne 10000 ] \
     || [ "$K" -ne 10 ];
 }; then
-    echo "Rebuttal protocol is fixed at 3000 epochs, one seed=0, eval seed=10000, K=10."
+    echo "Rebuttal protocol is fixed at 2000 epochs, one seed=0, eval seed=10000, K=10."
     echo "ALLOW_PROTOCOL_OVERRIDE=1 is only for isolated smoke/pilot directories."
     exit 1
 fi

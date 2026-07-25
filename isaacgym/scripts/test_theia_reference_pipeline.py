@@ -78,7 +78,7 @@ class ServerVersionManifestTest(unittest.TestCase):
         self.assertEqual(
             protocol["id"], "single_reference_raw_vs_refined_v2"
         )
-        self.assertEqual(protocol["training_epochs"], 3000)
+        self.assertEqual(protocol["training_epochs"], 2000)
         self.assertEqual(
             specification["repositories"]["ProtoMotions"]["commit"],
             EXPECTED_COMMIT,
@@ -164,7 +164,7 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         source = (
             SCRIPT_DIR / "run_theia_policy_reference.sh"
         ).read_text()
-        self.assertIn('TRAIN_EPOCHS="${TRAIN_EPOCHS:-3000}"', source)
+        self.assertIn('TRAIN_EPOCHS="${TRAIN_EPOCHS:-2000}"', source)
         self.assertIn('TRAINING_SEED="${TRAINING_SEED:-0}"', source)
         self.assertIn("FINETUNE_EPOCHS=0", source)
         self.assertIn("PROTOCOL_MODE=single_reference_rebuttal", source)
@@ -273,7 +273,7 @@ class ReferenceAggregationTest(unittest.TestCase):
             "\n".join([
                 "protocol=single_reference_raw_vs_refined_v2",
                 "reference_id={}".format(reference_id),
-                "train_epochs=3000",
+                "train_epochs=2000",
                 "training_seed=0",
                 "evaluation_seed=10000",
                 "k_trials=10",
@@ -301,7 +301,7 @@ class ReferenceAggregationTest(unittest.TestCase):
                 "condition={}".format(condition),
                 "training_seed=0",
                 "reference_count=1",
-                "bootstrap_epochs=3000",
+                "bootstrap_epochs=2000",
                 "finetune_epochs=0",
                 (
                     "train_env_config=isaacgym/src/intermimic/data/cfg/"
@@ -396,7 +396,7 @@ class ReferenceAggregationTest(unittest.TestCase):
             self.assertEqual(summary["num_references"], 2)
             self.assertEqual(
                 summary["repository_release"],
-                "theia-policy-rebuttal-v3-3000",
+                "theia-policy-rebuttal-v3-2000",
             )
             success = summary["metrics"]["ref_success_at_k_percent"]
             self.assertEqual(success["raw_mean"], 50.0)

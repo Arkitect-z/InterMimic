@@ -59,10 +59,10 @@ params:
     # Avoid eight workers repeatedly writing ~134 MB checkpoints in lockstep.
     save_reward_best: False
     save_best_after: 50
-    # One rolling checkpoint every 500 epochs plus the final checkpoint keeps
+    # One rolling checkpoint every 100 epochs plus the final checkpoint keeps
     # interruption recovery while halving network-filesystem traffic for the
-    # 3000-epoch per-reference rebuttal jobs.
-    save_frequency: 500
+    # 2000-epoch per-reference rebuttal jobs.
+    save_frequency: 100
     print_stats: True
     # Resource telemetry is sampled without blocking and only periodically.
     # GPU utilization is monitored by the external multi-GPU scheduler.
@@ -82,7 +82,7 @@ params:
     save_intermediate: False
     # Fixed, preregistered checkpoints for learning curves. Unlike
     # save_intermediate, this does not retain every periodic checkpoint.
-    checkpoint_milestones: [2000, 5000, 10000, 15000, 20000, 22000]
+    checkpoint_milestones: [1000, 2000]
     resume_from: None
     # A server restart must restore optimizer/epoch/best state. Policy-only
     # transfer is intentionally not the default.

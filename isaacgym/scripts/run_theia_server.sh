@@ -13,7 +13,7 @@ set -euo pipefail
 
 if [ "${ALLOW_LEGACY_UNIVERSAL:-0}" != "1" ]; then
     echo "run_theia_server.sh is a historical universal-policy workflow."
-    echo "Formal jobs must use run_theia_policy_reference_list.sh (v2/3000)."
+    echo "Formal jobs must use run_theia_policy_reference_list.sh (v3/2000)."
     echo "Set ALLOW_LEGACY_UNIVERSAL=1 only for a non-formal diagnostic."
     exit 1
 fi

@@ -2,7 +2,7 @@
 # Internal runner for one Theia policy condition and one training seed.
 #
 # Formal rebuttal jobs must enter through run_theia_policy_reference.sh or
-# run_theia_policy_reference_list.sh, which freeze the v2/3000 contract.
+# run_theia_policy_reference_list.sh, which freeze the v3/2000 contract.
 #
 # Usage:
 #   bash run_theia_policy_seed.sh \
@@ -137,14 +137,14 @@ if [ "$PROTOCOL_MODE" = "legacy_universal" ] \
 fi
 if [ "$ALLOW_NONFORMAL_PROTOCOL" = "0" ]; then
     if [ "$TRAINING_SEED" -ne 0 ] \
-        || [ "$BOOTSTRAP_EPOCHS" -ne 3000 ] \
+        || [ "$BOOTSTRAP_EPOCHS" -ne 2000 ] \
         || [ "$FINETUNE_EPOCHS" -ne 0 ] \
         || [ "$K" -ne 10 ] \
         || [ "$EVAL_SEED" -ne 10000 ] \
         || [ "$TRAIN_ENV_CONFIG" != \
             "isaacgym/src/intermimic/data/cfg/theia_reference_train.yaml" ]; then
         echo "Single-reference rebuttal protocol requires seed=0,"
-        echo "epochs=3000+0, K=10, eval seed=10000, and its frozen config."
+        echo "epochs=2000+0, K=10, eval seed=10000, and its frozen config."
         exit 1
     fi
 fi

@@ -4,7 +4,7 @@
 > handoff。论文的 paired S1 Raw-vs-Full 实验禁止使用
 > `run_theia_server.sh`，因为它不是逐 reference、Raw/Refined 各训练一次的
 > list-sharded \(K=10\) 协议。正式论文实验请只遵循
-> `HANDOFF_SERVER_POLICY_AB.md` 中唯一受支持的 v2/3000 方法；本文其余命令
+> `HANDOFF_SERVER_POLICY_AB.md` 中唯一受支持的 v3/2000 方法；本文其余命令
 > 均不具有正式实验资格。为防止误启动，`run_theia_server.sh` 默认拒绝运行；
 > 只有非正式历史诊断才可显式设置 `ALLOW_LEGACY_UNIVERSAL=1`。
 

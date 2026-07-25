@@ -1,31 +1,31 @@
 {
-  "schema_version": 1,
-  "release_name": "theia-policy-rebuttal-v3-3000",
-  "status": "only_supported_formal_policy_method",
-  "protocol": {
-    "id": "single_reference_raw_vs_refined_v2",
-    "training_epochs": 3000,
-    "training_runs_per_reference_per_condition": 1,
-    "training_seed": 0,
-    "evaluation_seed": 10000,
-    "evaluation_trials": 10
-  },
-  "repositories": {
-    "Theia": {
-      "github_slug": "Arkitect-z/Theia",
-      "commit": "611e75243247c67f96e977b99345c74cbba7806c",
-      "required_file": "toolkit/scripts/theia2intermimic.py",
-      "required_file_sha256": "3f6dac8621e5234c9077f1d06e48117c7b4e07738046b15e9c0043971e2e08a4"
+    "schema_version": 1,
+    "release_name": "theia-policy-rebuttal-v3-2000",
+    "status": "only_supported_formal_policy_method",
+    "protocol": {
+        "id": "single_reference_raw_vs_refined_v2",
+        "training_epochs": 2000,
+        "training_runs_per_reference_per_condition": 1,
+        "training_seed": 0,
+        "evaluation_seed": 10000,
+        "evaluation_trials": 10
     },
-    "InterMimic": {
-      "github_slug": "Arkitect-z/InterMimic",
-      "tag": "theia-policy-rebuttal-v3-3000"
-    },
-    "ProtoMotions": {
-      "github_slug": "NVlabs/ProtoMotions",
-      "commit": "4a905b998101333a2fb91f2de8e2cab4bd0db68e",
-      "required_file": "poselib/poselib/skeleton/skeleton3d.py",
-      "required_file_sha256": "a91a31770f4de5fd4d1619832d7739cf1f13b2fd3d138d3d6418ef71411724d4"
+    "repositories": {
+        "Theia": {
+            "github_slug": "Arkitect-z/Theia",
+            "commit": "611e75243247c67f96e977b99345c74cbba7806c",
+            "required_file": "toolkit/scripts/theia2intermimic.py",
+            "required_file_sha256": "3f6dac8621e5234c9077f1d06e48117c7b4e07738046b15e9c0043971e2e08a4"
+        },
+        "InterMimic": {
+            "github_slug": "Arkitect-z/InterMimic",
+            "tag": "theia-policy-rebuttal-v3-2000"
+        },
+        "ProtoMotions": {
+            "github_slug": "NVlabs/ProtoMotions",
+            "commit": "4a905b998101333a2fb91f2de8e2cab4bd0db68e",
+            "required_file": "poselib/poselib/skeleton/skeleton3d.py",
+            "required_file_sha256": "a91a31770f4de5fd4d1619832d7739cf1f13b2fd3d138d3d6418ef71411724d4"
+        }
     }
-  }
 }
