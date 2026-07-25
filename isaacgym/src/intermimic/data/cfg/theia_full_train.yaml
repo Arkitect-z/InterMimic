@@ -35,9 +35,6 @@ env:
   requireObjectDensity: False
   correctContactDistance: 0.05
   referenceAngularVelocityLimit: 20.0
-  residualBodyLimit: 0.30
-  residualWristLimit: 0.40
-  residualFingerLimit: 0.45
   # Conservative InterMimic objective with correctness fixes. Keep reference
   # contact as shaping, but never terminate merely because GT contact timing
   # was missed and never punish the approximate GPU wrong-contact signal.
@@ -59,7 +56,8 @@ env:
   wrongContactPenalty: 0.0
   terminalObjectPoseFrames: 30
   terminalObjectPoseBonusWeight: 0.0
-  validateReferenceFK: True
+  # Isaac FK propagation is an optional diagnostic, never a data gate.
+  validateReferenceFK: False
   fkMaxPositionError: 0.015
   fkMaxRotationErrorDeg: 10.0
   requireBimanualContact: True

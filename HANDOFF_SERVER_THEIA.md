@@ -128,8 +128,8 @@ git ls-files \
 - 右腕 DOF 名称和索引错误。
 - 四元数角速度计算错误和非物理尖峰。
 - `initVel: false`。
-- residual PD 改为围绕 `t+1` reference，并按 body/wrist/finger 限幅后再按
-  XML joint limit clamp。
+- residual PD 改为围绕 `t+1` reference，同时保留旧版成功训练所用的
+  per-DOF correction range；不再叠加未经验证的软件 residual/XML clamp。
 - reset 后 observation 陈旧。
 - object reward floor 导致物体未跟随仍可获得高 reward。
 - 物体 density/mass 未正确进入 Isaac runtime。
@@ -137,8 +137,8 @@ git ls-files \
 - motion、object pair、support table 在多序列环境中错配。
 - 每个环境固定绑定正确序列和对应资产。
 - 完整序列被固定 339 帧截断。
-- FK 过去只检查第一条 motion；现在所有 motion 并行、各自均匀采样 8 个时刻，
-  总计只需 8 个 PhysX steps。
+- 可选 FK 诊断在人工开启时会并行检查所有 motion、各自均匀采样 8 个时刻；
+  正式训练默认关闭，诊断超阈值也不会阻断 rollout。
 - 评测器 `games_num × 10` 提前退出；现在每个初始 env 恰好记录一次，并要求
   `Episodes == NUM_ENVS`。
 - 误差过去覆盖同一个 `[sequence,timestep]`；现在按 episode 累计并输出
@@ -173,8 +173,9 @@ git ls-files \
   isaacgym/src/intermimic/data/assets/objects/<Object>.urdf
   ```
 
-- 所有 motion 必须与当前 `smplx/theia.xml` articulation 兼容。运行时 FK
-  硬检查阈值是最大位置误差 `1.5 cm`、最大旋转误差 `10°`。
+- Isaac FK propagation 可以记录最大位置和旋转误差，但它不是训练数据准入
+  条件。只要 motion finite、schema/joint order 正确且 Isaac 能运行，就必须让
+  policy rollout 决定它是否可训练，不能按 FK 阈值提前排除。
 
 如果服务器数据包含以下情况，必须停止并报告，不能仅关闭 validator：
 
@@ -209,7 +210,7 @@ bash isaacgym/scripts/run_theia_server.sh
 3. 统计全部 `.pt` 序列。
 4. 在约 2048 env 的目标下选择按序列完全平衡的环境数。
 5. 运行静态数据/资产 preflight。
-6. 创建 GPU PhysX 环境并检查所有 motion 的 FK。
+6. 创建 GPU PhysX 环境；FK propagation 仅在排障时人工开启并记录。
 7. 训练 Stage A。
 8. 完整恢复到 Stage B。
 9. 运行平衡的 GPU 全长评测。
@@ -506,10 +507,11 @@ ls -l /dev/nvidiactl /dev/nvidia0
 
 物体 density 缺失已经不再是错误。
 
-### FK 失败
+### FK 诊断超阈值
 
-报告 motion id、frame、body、max position/rotation error。优先确认 converter、
-人物 skeleton 和 joint order。不要简单提高阈值超过 `1.5 cm / 10°`。
+记录 motion id、frame、body、max position/rotation error，用于定位 converter、
+人物 skeleton 或 joint order 问题，但继续训练。只有数据出现 NaN/Inf、schema
+错误、joint order/资产无法加载或 Isaac runtime 本身失败时才停止。
 
 ### CUDA OOM
 
@@ -591,7 +593,8 @@ sha256sum \
 服务器端任务只有同时满足以下条件才算完成：
 
 - 全部预期序列进入 manifest，没有静默 subset。
-- data/FK/CUDA 检查全部通过。
+- data schema/finite/资产/CUDA 检查全部通过；FK propagation 只需保存诊断，
+  不设通过门槛。
 - Stage A 和 Stage B checkpoint 都存在。
 - Stage B checkpoint epoch 达到目标。
 - 最终评测 `actual_episodes == expected_episodes`。

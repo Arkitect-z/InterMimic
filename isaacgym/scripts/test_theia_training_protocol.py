@@ -70,6 +70,28 @@ class FormalTrainingProtocolTests(unittest.TestCase):
             )
         self.assertEqual(self.envs["bootstrap"]["rolloutLength"], 100)
 
+    def test_reference_fk_is_diagnostic_not_a_training_gate(self):
+        for name, env in self.envs.items():
+            self.assertFalse(env["validateReferenceFK"], name)
+
+    def test_controller_keeps_legacy_residual_authority(self):
+        source = (
+            REPO_ROOT
+            / "isaacgym"
+            / "src"
+            / "intermimic"
+            / "env"
+            / "tasks"
+            / "intermimic.py"
+        ).read_text()
+        start = source.index("    def _action_to_pd_targets")
+        end = source.index("    def _compute_reward", start)
+        controller = source[start:end]
+        self.assertIn("self.progress_buf + 1", controller)
+        self.assertIn("action.clamp(-1.0, 1.0)", controller)
+        self.assertNotIn("_residual_limit_per_dof", controller)
+        self.assertNotIn("dof_limits_upper", controller)
+
     def test_resource_sampling_is_nonblocking(self):
         source = (
             REPO_ROOT

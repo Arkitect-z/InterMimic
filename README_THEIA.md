@@ -6,7 +6,7 @@ This fork extends [InterMimic](https://github.com/JudyYe/haptic) to support **du
 
 ### Architecture
 - **Dual-object support**: Each environment contains 2 objects (e.g., CupBlue + KettleGreen) with independent physics, rewards, and tracking.
-- **Residual PD control**: Policy outputs bounded corrections around the next reference frame (`action=0` = follow reference). Limits are body=0.30 rad, wrist=0.40 rad, fingers=0.45 rad, followed by XML DOF-limit clamping.
+- **Residual PD control**: Policy outputs corrections around the next reference frame (`action=0` = follow reference). It retains the successful legacy per-DOF correction authority, including the larger knee scale; actions are clipped to `[-1, 1]` and Isaac enforces the articulation limits.
 - **Data-driven joint ranges**: Joint limits computed from actual motion data (2x margin), replacing the overly wide default ranges.
 - **Adaptive rollout length**: Automatically extends to cover all contact transition windows in the data.
 - **Transition-weighted RSI**: Reference State Initialization samples approach-to-grasp transitions 4x more frequently.

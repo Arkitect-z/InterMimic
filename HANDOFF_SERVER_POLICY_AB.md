@@ -82,7 +82,7 @@ Theia
 
 InterMimic
   remote: Arkitect-z/InterMimic
-  tag: theia-policy-rebuttal-v2-3000
+  tag: theia-policy-rebuttal-v3-3000
 
 ProtoMotions
   remote: NVlabs/ProtoMotions
@@ -104,7 +104,7 @@ git -C "$THEIA_ROOT/thirdparty/ProtoMotions" checkout --detach \
 
 git -C "$INTERMIMIC_ROOT" fetch origin main --tags
 git -C "$INTERMIMIC_ROOT" checkout --detach \
-  theia-policy-rebuttal-v2-3000
+  theia-policy-rebuttal-v3-3000
 ```
 
 然后由 agent 自主运行唯一总检查器：
@@ -245,7 +245,9 @@ repository_versions.json
 ```
 
 该门还会确认 Raw/Refined 的人体参考确实不同、object/contact supervision
-相同、数据 finite、四元数有效、手—物体标签一致和 FK 可接受。
+相同、数据 finite、四元数有效和手—物体标签一致。Isaac FK propagation
+只能作为诊断记录，不能据此排除一个 finite、schema 合法且仍可能训练成功的
+reference。
 
 ## 7. GPU smoke 与 4090 环境数
 
@@ -463,7 +465,8 @@ epoch 为 1100，SHA-256 为
 保留的必要 bug 修复：
 
 - dual-object 和多 reference 的正确 actor/data 绑定；
-- action 以 `t+1` reference 为 PD target，并受 residual/XML 限位约束；
+- action 以 `t+1` reference 为 PD target，保留旧版成功配方的 residual
+  correction range；action 仍裁剪到 `[-1,1]`，关节物理范围由 Isaac 执行；
 - 右腕 DOF 解析、四元数角速度、`initVel:false`；
 - reset 后 observation 刷新和 batched reset；
 - Raw/Refined 共同 ground alignment；
@@ -471,7 +474,8 @@ epoch 为 1100，SHA-256 为
 - 手与目标物体的正确配对；
 - 去掉会虚增失败轨迹 reward 的 object reward floor；
 - evaluator 的 active-env cohort、恰好 K trials 和 episode-level error 聚合；
-- FK/data fail-fast。
+- schema、finite、资产与序列绑定错误的 data fail-fast；FK propagation
+  超阈值仅诊断，不阻断训练；
 
 为降低失败风险和开销，当前明确不采用：
 

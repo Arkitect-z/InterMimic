@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release_name": "theia-policy-rebuttal-v2-3000",
+  "release_name": "theia-policy-rebuttal-v3-3000",
   "status": "only_supported_formal_policy_method",
   "protocol": {
     "id": "single_reference_raw_vs_refined_v2",
@@ -19,7 +19,7 @@
     },
     "InterMimic": {
       "github_slug": "Arkitect-z/InterMimic",
-      "tag": "theia-policy-rebuttal-v2-3000"
+      "tag": "theia-policy-rebuttal-v3-3000"
     },
     "ProtoMotions": {
       "github_slug": "NVlabs/ProtoMotions",

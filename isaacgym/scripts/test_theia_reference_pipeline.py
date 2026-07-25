@@ -204,6 +204,7 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         self.assertTrue(env["adaptiveRolloutFromLatestContact"])
         self.assertEqual(env["contactRewardMode"], "legacy_multiplicative")
         self.assertFalse(env["enableContactFailureTermination"])
+        self.assertFalse(env["validateReferenceFK"])
         self.assertEqual(env["wrongContactPenalty"], 0.0)
         self.assertFalse(env["enableTrainingDiagnostics"])
         self.assertFalse(env["enableStepDiagnostics"])
@@ -395,7 +396,7 @@ class ReferenceAggregationTest(unittest.TestCase):
             self.assertEqual(summary["num_references"], 2)
             self.assertEqual(
                 summary["repository_release"],
-                "theia-policy-rebuttal-v2-3000",
+                "theia-policy-rebuttal-v3-3000",
             )
             success = summary["metrics"]["ref_success_at_k_percent"]
             self.assertEqual(success["raw_mean"], 50.0)

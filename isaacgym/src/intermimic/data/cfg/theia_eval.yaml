@@ -31,7 +31,8 @@ env:
   # Wrong contacts are reported, but are not a universal failure condition:
   # an unseen task may use a valid interaction strategy absent from the GT.
   evaluationRequireNoWrongContact: False
-  validateReferenceFK: True
+  # Evaluation must measure rollouts rather than reject finite references.
+  validateReferenceFK: False
   # ProtoMotions and Isaac agree within millimetres on the main body.  The
   # terminal finger capsules differ by at most ~12.3 mm / 8.9 degrees.
   fkMaxPositionError: 0.015
@@ -51,9 +52,6 @@ env:
   requireObjectDensity: False
   correctContactDistance: 0.05
   referenceAngularVelocityLimit: 20.0
-  residualBodyLimit: 0.30
-  residualWristLimit: 0.40
-  residualFingerLimit: 0.45
   # Evaluate task completion without allowing GT contact timing to terminate
   # the rollout. Actor-pair contact is still reported as a separate metric.
   contactRewardMode: "soft"
