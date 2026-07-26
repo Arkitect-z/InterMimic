@@ -227,11 +227,11 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         self.assertEqual(config["e_clip"], 0.2)
         self.assertEqual(config["mini_epochs"], 6)
         self.assertEqual(config["horizon_length"], 32)
-        self.assertEqual(config["save_frequency"], 100)
+        self.assertEqual(config["save_frequency"], 200)
         self.assertFalse(config["save_intermediate"])
         self.assertEqual(
             config["checkpoint_milestones"],
-            list(range(100, 2001, 100)),
+            list(range(200, 2001, 200)),
         )
         self.assertFalse(config["save_reward_best"])
         self.assertIn(config["resume_from"], (None, "None"))

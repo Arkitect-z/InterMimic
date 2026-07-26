@@ -59,8 +59,8 @@ params:
     # Avoid eight workers repeatedly writing ~134 MB checkpoints in lockstep.
     save_reward_best: False
     save_best_after: 50
-    # Update the rolling interruption checkpoint every 100 epochs.
-    save_frequency: 100
+    # Update the rolling interruption checkpoint every 200 epochs.
+    save_frequency: 200
     print_stats: True
     # Resource telemetry is sampled without blocking and only periodically.
     # GPU utilization is monitored by the external multi-GPU scheduler.
@@ -78,10 +78,10 @@ params:
     bounds_loss_coef: 10
     enable_eps_greedy: False
     # Keep the shared config bounded for longer legacy runs.  The formal
-    # 2000-epoch protocol retains every 100-epoch checkpoint through explicit
+    # 2000-epoch protocol retains every 200-epoch checkpoint through explicit
     # milestones, whose names are also understood by the resume selector.
     save_intermediate: False
-    checkpoint_milestones: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
+    checkpoint_milestones: [200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000]
     resume_from: None
     # A server restart must restore optimizer/epoch/best state. Policy-only
     # transfer is intentionally not the default.

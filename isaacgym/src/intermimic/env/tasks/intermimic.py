@@ -20,6 +20,8 @@ from ...utils.path_utils import resolve_data_path
 
 
 class InterMimic(Humanoid_SMPLX):
+    _ENV_STATE_SCHEMA_VERSION = 1
+
     class StateInit(Enum):
         Default = 0
         Start = 1
@@ -266,7 +268,7 @@ class InterMimic(Humanoid_SMPLX):
             # _load_motion() may increase rollout_length for late contact.
             # Allocate from the final value to keep every valid buffer_t in
             # bounds.
-            buf_len = max(self.rollout_length, cfg['env']['episodeLength'])
+            buf_len = max(2, int(self.rollout_length))
             self._curr_reward = torch.zeros([self.num_envs, buf_len], device=self.device, dtype=torch.float)
             self._sum_reward = torch.zeros([self.num_envs], device=self.device, dtype=torch.float)
             self._curr_state = torch.zeros([self.num_envs, buf_len, 345], device=self.device, dtype=torch.float)
@@ -275,6 +277,98 @@ class InterMimic(Humanoid_SMPLX):
             self._validate_reference_fk()
 
         return
+
+    def _psi_checkpoint_metadata(self):
+        return {
+            'schema_version': self._ENV_STATE_SCHEMA_VERSION,
+            'physical_buffer_size': int(self.psi),
+            'num_motions': int(self.num_motions),
+            'rollout_length': int(self.rollout_length),
+            'motion_files': [
+                os.path.basename(path) for path in self.motion_file
+            ],
+            'max_episode_length': [
+                int(length)
+                for length in self.max_episode_length.detach().cpu().tolist()
+            ],
+        }
+
+    def get_env_state(self):
+        """Return the persistent PSI curriculum for a full-state checkpoint."""
+        if self.psi <= 1:
+            return None
+
+        state = self._psi_checkpoint_metadata()
+        state.update({
+            # Slot zero is reconstructed deterministically from the frozen
+            # reference data. Only the learned PSI alternatives must persist.
+            'synthetic_hoi_refs': self.hoi_refs[:, 1:].detach().cpu(),
+            'synthetic_ref_reward': self.ref_reward[:, 1:].detach().cpu(),
+        })
+        return state
+
+    def set_env_state(self, state):
+        """Restore a PSI curriculum after the task has loaded its references."""
+        if self.psi <= 1:
+            if state is not None:
+                raise ValueError(
+                    "Checkpoint contains PSI state but the current task has "
+                    f"physicalBufferSize={self.psi}"
+                )
+            return
+        if state is None:
+            raise ValueError(
+                "Checkpoint has no PSI curriculum state; refusing an "
+                "incomplete full-state resume with physicalBufferSize > 1"
+            )
+        if not isinstance(state, dict):
+            raise TypeError(
+                "Checkpoint env_state must be a dictionary for PSI training"
+            )
+
+        expected_metadata = self._psi_checkpoint_metadata()
+        for key, expected in expected_metadata.items():
+            if key not in state:
+                raise ValueError(
+                    f"Checkpoint PSI state is missing metadata field {key!r}"
+                )
+            if state[key] != expected:
+                raise ValueError(
+                    f"Checkpoint PSI metadata mismatch for {key}: "
+                    f"checkpoint={state[key]!r}, current={expected!r}"
+                )
+
+        tensors = (
+            ('synthetic_hoi_refs', self.hoi_refs[:, 1:]),
+            ('synthetic_ref_reward', self.ref_reward[:, 1:]),
+        )
+        validated = []
+        for key, target in tensors:
+            value = state.get(key)
+            if not isinstance(value, torch.Tensor):
+                raise TypeError(
+                    f"Checkpoint PSI field {key!r} must be a tensor"
+                )
+            if value.shape != target.shape:
+                raise ValueError(
+                    f"Checkpoint PSI shape mismatch for {key}: "
+                    f"checkpoint={tuple(value.shape)}, "
+                    f"current={tuple(target.shape)}"
+                )
+            if value.dtype != target.dtype:
+                raise ValueError(
+                    f"Checkpoint PSI dtype mismatch for {key}: "
+                    f"checkpoint={value.dtype}, current={target.dtype}"
+                )
+            if not torch.isfinite(value).all():
+                raise ValueError(
+                    f"Checkpoint PSI field {key!r} contains non-finite values"
+                )
+            validated.append((target, value))
+
+        with torch.no_grad():
+            for target, value in validated:
+                target.copy_(value.to(device=target.device))
 
     def _valid_motions_for_env(self, env_id):
         """Each environment is bound to one sequence and its fixed tables."""

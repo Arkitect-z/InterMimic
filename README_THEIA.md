@@ -97,7 +97,7 @@ bash isaacgym/scripts/run_theia_policy_reference_list.sh \
 ```
 
 For every listed reference, the worker trains one Raw and one
-measured-tactile-refined policy for 3000 Hybrid/RSI epochs using the same
+measured-tactile-refined policy for 2000 Hybrid/RSI epochs using the same
 fixed seed, then performs K=10 parallel evaluation rollouts. The seed fixes
 the initialization; it is not a request for repeated training. Different
 cluster/GPU workers receive disjoint reference lists. Runs are resumable and
@@ -109,7 +109,7 @@ preparation, the pinned Theia/InterMimic/ProtoMotions release, list sharding,
 smoke tests and the final paired result aggregator. The exact repository
 contract is machine-readable in
 [`THEIA_POLICY_SERVER_VERSION.json`](THEIA_POLICY_SERVER_VERSION.json).
-`single_reference_raw_vs_refined_v2` at 3000 epochs is the only supported
+`single_reference_raw_vs_refined_v2` at 2000 epochs is the only supported
 formal method. `run_theia_server.sh`, v1/1100, and the 20k+2k full-dataset
 workflow are historical tools and must not be used for rebuttal results.
 
@@ -198,7 +198,7 @@ remains experimental rather than the production default.
 The following older workflow trains one universal policy over a directory.
 It is retained only for engineering history and must not be used for the
 formal Raw-vs-Refined results. The server agent should follow the list-sharded
-v2/3000 handoff above.
+v3/2000 handoff above.
 
 1. Convert all sequences into `theia_data/`; keep the `sub<number>_<left>+<right>_<sequence>.pt` naming convention.
 2. Ensure every object mesh and URDF exists. Exact density is optional; unknown
@@ -258,7 +258,7 @@ penalized. Strict PhysX actor-pair contacts remain evaluation-only diagnostics.
 isaacgym/
   scripts/
     train_all.sh          # Legacy single-sequence launcher
-    run_theia_policy_reference_list.sh # Formal v2/3000 GPU worker
+    run_theia_policy_reference_list.sh # Formal v3/2000 GPU worker
     check_theia_server_versions.py # Formal three-repository gate
     run_theia_server.sh   # Blocked-by-default legacy universal workflow
     train_theia_full.sh   # Internal training/resume stage

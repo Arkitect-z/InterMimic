@@ -182,6 +182,12 @@ class RLGPUEnv(vecenv.IVecEnv):
         else:
             return self.full_state["obs"]
 
+    def get_env_state(self):
+        return self.env.get_env_state()
+
+    def set_env_state(self, state):
+        self.env.set_env_state(state)
+
     def get_number_of_agents(self):
         return self.env.get_number_of_agents()
 

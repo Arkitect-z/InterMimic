@@ -351,9 +351,10 @@ else
 fi
 
 checkpoint_epoch() {
-    python - "$1" <<'PY'
+    python - "$1" "$TRAIN_ENV_CONFIG" <<'PY'
 import sys
 import torch
+import yaml
 
 checkpoint = torch.load(
     sys.argv[1], map_location="cpu", weights_only=False
@@ -373,12 +374,50 @@ if missing:
     raise SystemExit(
         f"checkpoint is missing full-state fields {missing}: {sys.argv[1]}"
     )
+with open(sys.argv[2]) as source:
+    physical_buffer_size = int(
+        yaml.safe_load(source)["env"].get("physicalBufferSize", 1)
+    )
+if physical_buffer_size > 1:
+    env_state = checkpoint["env_state"]
+    if not isinstance(env_state, dict):
+        raise SystemExit(
+            "checkpoint has no restorable PSI curriculum state: "
+            f"{sys.argv[1]}"
+        )
+    required_env_state = {
+        "schema_version",
+        "physical_buffer_size",
+        "num_motions",
+        "rollout_length",
+        "motion_files",
+        "max_episode_length",
+        "synthetic_hoi_refs",
+        "synthetic_ref_reward",
+    }
+    missing_env_state = sorted(required_env_state - set(env_state))
+    if missing_env_state:
+        raise SystemExit(
+            "checkpoint PSI state is missing fields "
+            f"{missing_env_state}: {sys.argv[1]}"
+        )
+    if env_state["schema_version"] != 1:
+        raise SystemExit(
+            "unsupported checkpoint PSI state schema "
+            f"{env_state['schema_version']!r}: {sys.argv[1]}"
+        )
+    if env_state["physical_buffer_size"] != physical_buffer_size:
+        raise SystemExit(
+            "checkpoint PSI physicalBufferSize does not match the current "
+            f"config: {sys.argv[1]}"
+        )
 print(int(checkpoint["epoch"]))
 PY
 }
 
 SELECTED_CHECKPOINT=""
 SELECTED_EPOCH=0
+CHECKPOINT_CANDIDATE_COUNT=0
 
 consider_checkpoint() {
     local candidate="$1"
@@ -387,6 +426,7 @@ consider_checkpoint() {
     if [ ! -f "$candidate" ]; then
         return
     fi
+    CHECKPOINT_CANDIDATE_COUNT=$((CHECKPOINT_CANDIDATE_COUNT + 1))
     if ! candidate_epoch="$(checkpoint_epoch "$candidate" 2>/dev/null)"; then
         echo "[WARN] Ignoring unreadable/incomplete checkpoint: $candidate"
         return
@@ -410,6 +450,7 @@ select_resume_checkpoint() {
 
     SELECTED_CHECKPOINT=""
     SELECTED_EPOCH=0
+    CHECKPOINT_CANDIDATE_COUNT=0
     consider_checkpoint "$nn_dir/mimic.pth" "$target_epoch"
     for candidate in "$nn_dir"/mimic_epoch_*.pth; do
         [ -e "$candidate" ] || continue
@@ -446,6 +487,13 @@ run_to_epoch() {
     select_resume_checkpoint "$output_dir" "$target_epoch" "$fallback_checkpoint"
     restore_checkpoint="$SELECTED_CHECKPOINT"
     current_epoch="$SELECTED_EPOCH"
+    if [ -z "$restore_checkpoint" ] \
+        && [ "$CHECKPOINT_CANDIDATE_COUNT" -gt 0 ]; then
+        echo "Existing checkpoints were found, but none is a compatible "
+        echo "full-state checkpoint at or before epoch $target_epoch."
+        echo "Refusing to restart from scratch in the same output directory."
+        exit 1
+    fi
     if [ -n "$restore_checkpoint" ]; then
         mode="resume"
         echo "[RESUME] selected epoch=$current_epoch checkpoint=$restore_checkpoint"

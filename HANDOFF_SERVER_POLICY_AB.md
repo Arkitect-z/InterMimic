@@ -363,8 +363,15 @@ TORCH_DETERMINISTIC=0
 ```
 
 `TORCH_DETERMINISTIC=0` 与此前成功 launcher 一致且更快；Raw/Refined 仍共享
-固定 seed 和完全相同的随机协议。重复相同 worker 命令会从完整 checkpoint
-恢复，已经完成的训练和已 hash 验证的评测会跳过。
+固定 seed 和相同训练配置，但 GPU PhysX 不保证逐步 bitwise 确定。重复相同
+worker 命令会恢复模型、优化器、normalizer、epoch/frame 和持久 PSI curriculum；
+恢复后的新 episode 不承诺复现中断前的瞬时模拟/RNG 状态。已经完成的训练和
+已 hash 验证的评测会跳过。
+
+PSI 训练只接受本版本生成、包含 schema 化 curriculum 状态的 checkpoint。
+旧 checkpoint 的 `env_state` 为 `None`，不能作为完整断点续训来源；脚本会拒绝
+在原目录静默从零覆盖。需要使用旧权重做非正式实验时，应另建目录并显式采用
+policy-only warm start，不能混入正式结果。
 
 ## 10. 多集群结果汇集
 
@@ -440,24 +447,27 @@ policy 稳定性，但不替代 InterMimic 的 reference coverage。
 其保存 checkpoint 位于 epoch 1100。当前逐 reference 配方继续使用其核心，
 并把正式预算提高到 2000 epochs，为更困难的未见序列保留额外收敛空间：
 
-本机复算还确认，早期成功训练所用的
+仓库内可确认的事实是：`3bc54a5` 跟踪的
 `theia_data/sub1_CupBlue+KettleGreen_S1L33P01T0508V01.pt`
 SHA-256 为
-`8b2bc64a7e991573e9198b0969a440889005db2e47165fe1a681cabdcbf9c790`，
-与当前 paired converter 生成的 Refined 文件逐字节相同；对应 checkpoint
-epoch 为 1100，SHA-256 为
-`31df8385c8473f27147ebd89d1be6d9facaea4da768ee55f7cc51cfe2449fa8a`。
-因此 1100 是 Refined 单序列已有成功证据的下限，不是任意选择。正式实验统一
-提高到 2000，而不是按序列难度动态加时；Raw 是否能在相同 2000-epoch 预算内
-学会正是本次 comparison 的测量对象。更长预算也可能让部分 Raw policy 追上，
-因此它提高困难序列的绝对成功率，但不保证扩大 Raw/Refined 差值。
+`d52cf6b0d4d672321c81a1d99892778fef3fdb09202176fb128bf0e1ecbd73c9`，
+当前文件则为
+`8b2bc64a7e991573e9198b0969a440889005db2e47165fe1a681cabdcbf9c790`。
+epoch-1100 checkpoint 的 SHA-256 是
+`31df8385c8473f27147ebd89d1be6d9facaea4da768ee55f7cc51cfe2449fa8a`，
+但 checkpoint 内没有数据或配置 hash，仓库证据不能证明它使用了当前 Refined
+文件。因此 epoch 1100 只能作为早期单序列配方成功的证据，不能作为当前数据
+逐字节同源的证据。正式实验统一训练 2000 epochs，而不是按序列难度动态加时；
+Raw 是否能在相同预算内学会正是本次 comparison 的测量对象。更长预算也可能
+让部分 Raw policy 追上，因此它提高困难序列的绝对成功率，但不保证扩大
+Raw/Refined 差值。
 
 | 项目 | 早期成功配方 | 当前正式逐 reference 配方 |
 |---|---|---|
 | 网络 | `[1024,1024,512]` | 不变 |
 | PPO LR / clip | `2e-5 / 0.2` | 不变 |
 | horizon / mini epochs | `32 / 6` | 不变 |
-| 初始化 | Hybrid, rollout 100 | 不变 |
+| 初始化 | Hybrid，配置 rollout 100；本序列有效 156 | 不变 |
 | 训练预算 | 成功 checkpoint epoch 1100 | 固定 2000 |
 | contact reward | legacy multiplicative | 保留 |
 | wrist/object phase reset | 已硬编码使用 | 保留并配置化 |
@@ -467,7 +477,8 @@ epoch 为 1100，SHA-256 为
 - dual-object 和多 reference 的正确 actor/data 绑定；
 - action 以 `t+1` reference 为 PD target，保留旧版成功配方的 residual
   correction range；action 仍裁剪到 `[-1,1]`，关节物理范围由 Isaac 执行；
-- 右腕 DOF 解析、四元数角速度、`initVel:false`；
+- 右腕 DOF 解析、四元数角速度；RSI reset 始终恢复参考速度，
+  `initVel` 只控制参考数据首帧速度的构造；
 - reset 后 observation 刷新和 batched reset；
 - Raw/Refined 共同 ground alignment；
 - 物体密度字典带默认值，不要求精确真实密度；
@@ -479,7 +490,6 @@ epoch 为 1100，SHA-256 为
 
 为降低失败风险和开销，当前明确不采用：
 
-- Physical Buffer/PSI 状态替换（`physicalBufferSize: 1`）；
 - 因错过 GT contact timing 而 hard terminate；
 - approximate wrong-contact penalty；
 - exact actor-pair contact 参与训练；
@@ -502,13 +512,14 @@ Refined 一定显著更高；若结果不显著，不能通过修改 Raw 专属�
 - `enableStepDiagnostics`；
 - exact-contact evaluation during training；
 - reward-best 额外 checkpoint；
-- Physical Buffer 大状态缓存。
 
 保留：
 
 - 标准 `train.log` 和 TensorBoard scalar；
 - 每 50 epochs 一次非阻塞资源 telemetry；
-- 每 500 epochs 覆盖写一个 rolling checkpoint；
+- Physical Buffer/PSI 状态替换（`physicalBufferSize: 3`），其课程状态随
+  full-state checkpoint 保存和恢复；
+- 每 200 epochs 覆盖写一个 rolling checkpoint，并保留同周期永久 milestone；
 - epoch 2000 final checkpoint；
 - 一次 K=10 评测的 CSV/JSON/hash。
 

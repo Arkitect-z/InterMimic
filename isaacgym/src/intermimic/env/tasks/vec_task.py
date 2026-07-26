@@ -44,6 +44,21 @@ class VecTask():
     def get_number_of_agents(self):
         return self.num_agents
 
+    def get_env_state(self):
+        getter = getattr(self.task, 'get_env_state', None)
+        return getter() if getter is not None else None
+
+    def set_env_state(self, state):
+        setter = getattr(self.task, 'set_env_state', None)
+        if setter is None:
+            if state is not None:
+                raise ValueError(
+                    "Checkpoint contains environment state, but the task "
+                    "does not support restoring it"
+                )
+            return
+        setter(state)
+
     @property
     def observation_space(self):
         return self.obs_space
