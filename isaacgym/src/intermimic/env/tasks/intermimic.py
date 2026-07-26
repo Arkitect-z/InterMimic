@@ -258,12 +258,15 @@ class InterMimic(Humanoid_SMPLX):
             print(f"[DIAG] Writing per-step diagnostics to {diag_path}")
         self.dataset_id = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         # PSI is disabled when physicalBufferSize <= 1.  Do not reserve the
-        # ~0.8 GiB state buffer in the normal Theia training/evaluation path.
+        # state buffer in paths that do not use physical state replacement.
         self._curr_reward = None
         self._sum_reward = None
         self._curr_state = None
         if self.psi > 1:
-            buf_len = max(cfg['env']['rolloutLength'], cfg['env']['episodeLength'])
+            # _load_motion() may increase rollout_length for late contact.
+            # Allocate from the final value to keep every valid buffer_t in
+            # bounds.
+            buf_len = max(self.rollout_length, cfg['env']['episodeLength'])
             self._curr_reward = torch.zeros([self.num_envs, buf_len], device=self.device, dtype=torch.float)
             self._sum_reward = torch.zeros([self.num_envs], device=self.device, dtype=torch.float)
             self._curr_state = torch.zeros([self.num_envs, buf_len, 345], device=self.device, dtype=torch.float)
@@ -1252,11 +1255,8 @@ class InterMimic(Humanoid_SMPLX):
         for st, prefix in [(self._target_states_1, 'obj1'), (self._target_states_2, 'obj2')]:
             st[env_ids, :3] = self.extract_ref_component(f'{prefix}_pos', d, r, t)
             st[env_ids, 3:7] = self.extract_ref_component(f'{prefix}_rot', d, r, t)
-            if self.init_vel:
-                st[env_ids, 7:10] = self.extract_ref_component(f'{prefix}_pos_vel', d, r, t)
-                st[env_ids, 10:13] = self.extract_ref_component(f'{prefix}_rot_vel', d, r, t)
-            else:
-                st[env_ids, 7:13] = 0
+            st[env_ids, 7:10] = self.extract_ref_component(f'{prefix}_pos_vel', d, r, t)
+            st[env_ids, 10:13] = self.extract_ref_component(f'{prefix}_rot_vel', d, r, t)
 
     def _reset_env_tensors(self, env_ids):
         super()._reset_env_tensors(env_ids)
@@ -1438,17 +1438,11 @@ class InterMimic(Humanoid_SMPLX):
     def _set_env_state(self, env_ids, root_pos, root_rot, dof_pos, root_vel, root_ang_vel, dof_vel):
         self._humanoid_root_states[env_ids, 0:3] = root_pos
         self._humanoid_root_states[env_ids, 3:7] = root_rot
-        if self.init_vel:
-            self._humanoid_root_states[env_ids, 7:10] = root_vel
-            self._humanoid_root_states[env_ids, 10:13] = root_ang_vel
-        else:
-            self._humanoid_root_states[env_ids, 7:13] = 0
+        self._humanoid_root_states[env_ids, 7:10] = root_vel
+        self._humanoid_root_states[env_ids, 10:13] = root_ang_vel
         
         self._dof_pos[env_ids] = dof_pos
-        if self.init_vel:
-            self._dof_vel[env_ids] = dof_vel
-        else:
-            self._dof_vel[env_ids] = 0
+        self._dof_vel[env_ids] = dof_vel
         return
 
     def _compute_task_obs(self, env_ids=None, ref_obs=None):

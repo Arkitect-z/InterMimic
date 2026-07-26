@@ -208,7 +208,7 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         self.assertEqual(env["wrongContactPenalty"], 0.0)
         self.assertFalse(env["enableTrainingDiagnostics"])
         self.assertFalse(env["enableStepDiagnostics"])
-        self.assertEqual(env["physicalBufferSize"], 1)
+        self.assertEqual(env["physicalBufferSize"], 3)
 
     def test_ppo_core_matches_successful_from_scratch_recipe(self):
         path = (
@@ -227,7 +227,12 @@ class FormalReferenceProtocolTest(unittest.TestCase):
         self.assertEqual(config["e_clip"], 0.2)
         self.assertEqual(config["mini_epochs"], 6)
         self.assertEqual(config["horizon_length"], 32)
-        self.assertEqual(config["save_frequency"], 500)
+        self.assertEqual(config["save_frequency"], 100)
+        self.assertFalse(config["save_intermediate"])
+        self.assertEqual(
+            config["checkpoint_milestones"],
+            list(range(100, 2001, 100)),
+        )
         self.assertFalse(config["save_reward_best"])
         self.assertIn(config["resume_from"], (None, "None"))
 

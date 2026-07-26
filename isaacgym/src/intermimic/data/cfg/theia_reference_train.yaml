@@ -59,9 +59,9 @@ env:
   contactBodies: ["L_Hip", "L_Knee", "L_Ankle", "L_Toe", "R_Hip", "R_Knee", "R_Ankle", "R_Toe", "Torso", "Spine", "Chest", "Neck", "Head", "L_Thorax", "L_Shoulder", "L_Elbow", "L_Wrist", "R_Thorax", "R_Shoulder", "R_Elbow", "R_Wrist", "L_Index3", "L_Middle3", "L_Pinky3", "L_Ring3", "L_Thumb3", "R_Index3", "R_Middle3", "R_Pinky3", "R_Ring3", "R_Thumb3"]
   terminationHeight: 0.15
   enableEarlyTermination: True
-  # PSI state replacement remains disabled: it was not needed by the verified
-  # repair and its large state buffer/trajectory mutation is not justified.
-  physicalBufferSize: 1
+  # Match the official and previously successful physical state replacement
+  # curriculum for from-scratch per-reference training.
+  physicalBufferSize: 3
 
   asset:
     assetRoot: "intermimic/data/assets"

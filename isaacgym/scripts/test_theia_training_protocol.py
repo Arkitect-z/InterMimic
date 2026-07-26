@@ -92,6 +92,47 @@ class FormalTrainingProtocolTests(unittest.TestCase):
         self.assertNotIn("_residual_limit_per_dof", controller)
         self.assertNotIn("dof_limits_upper", controller)
 
+    def test_rsi_reset_restores_reference_velocities(self):
+        source = (
+            REPO_ROOT
+            / "isaacgym"
+            / "src"
+            / "intermimic"
+            / "env"
+            / "tasks"
+            / "intermimic.py"
+        ).read_text()
+        target_start = source.index("    def _reset_target")
+        target_end = source.index("    def _reset_env_tensors", target_start)
+        target_reset = source[target_start:target_end]
+        state_start = source.index("    def _set_env_state")
+        state_end = source.index("    def _compute_task_obs", state_start)
+        state_reset = source[state_start:state_end]
+
+        self.assertNotIn("self.init_vel", target_reset)
+        self.assertIn("f'{prefix}_pos_vel'", target_reset)
+        self.assertIn("f'{prefix}_rot_vel'", target_reset)
+        self.assertNotIn("self.init_vel", state_reset)
+        self.assertIn("= root_vel", state_reset)
+        self.assertIn("= root_ang_vel", state_reset)
+        self.assertIn("= dof_vel", state_reset)
+
+    def test_psi_buffer_uses_final_rollout_length(self):
+        source = (
+            REPO_ROOT
+            / "isaacgym"
+            / "src"
+            / "intermimic"
+            / "env"
+            / "tasks"
+            / "intermimic.py"
+        ).read_text()
+        self.assertIn(
+            "buf_len = max(self.rollout_length, "
+            "cfg['env']['episodeLength'])",
+            source,
+        )
+
     def test_resource_sampling_is_nonblocking(self):
         source = (
             REPO_ROOT
@@ -104,7 +145,7 @@ class FormalTrainingProtocolTests(unittest.TestCase):
         self.assertNotIn("cpu_percent(interval=1)", source)
         self.assertNotIn("subprocess.run(['nvidia-smi'", source)
 
-    def test_checkpoint_io_is_bounded(self):
+    def test_checkpoint_history_is_retained_every_100_epochs(self):
         train = (
             REPO_ROOT
             / "isaacgym"
@@ -118,11 +159,28 @@ class FormalTrainingProtocolTests(unittest.TestCase):
         )
         config = yaml.safe_load(train.read_text())["params"]["config"]
         self.assertFalse(config["save_reward_best"])
-        self.assertGreaterEqual(config["save_frequency"], 250)
+        self.assertEqual(config["save_frequency"], 100)
+        self.assertFalse(config["save_intermediate"])
         self.assertEqual(
             config["checkpoint_milestones"],
-            [2000, 5000, 10000, 15000, 20000, 22000],
+            list(range(100, 2001, 100)),
         )
+        agent = (
+            REPO_ROOT
+            / "isaacgym"
+            / "src"
+            / "intermimic"
+            / "learning"
+            / "intermimic_agent.py"
+        ).read_text()
+        runner = (
+            REPO_ROOT
+            / "isaacgym"
+            / "scripts"
+            / "run_theia_policy_seed.sh"
+        ).read_text()
+        self.assertIn("+ '_epoch_'", agent)
+        self.assertIn('"$nn_dir"/mimic_epoch_*.pth', runner)
 
 
 if __name__ == "__main__":
